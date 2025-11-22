@@ -111,7 +111,7 @@ class InnoFlow(FlowModule):
         # self.survey_agent = AgentModule(get_survey_agent(model=CHEEP_MODEL, file_env=file_env, code_env=code_env), self.client, cache_path)
         self.code_survey_agent = AgentModule(get_code_survey_agent(model=CHEEP_MODEL, file_env=file_env, code_env=code_env), self.client, cache_path)
         self.exp_analyser = AgentModule(get_exp_analyser_agent(model=CHEEP_MODEL, file_env=file_env, code_env=code_env), self.client, cache_path)
-    async def forward(self, instance_path: str, task_level: str, local_root: str, workplace_name: str, max_iter_times: int, category: str, references: str, *args, **kwargs):
+    async def forward(self, instance_path: str, task_level: str, local_root: str, workplace_name: str, max_iter_times: int, category: str, references: str, mode: str = "Idea Spark", custom_task: str = None, *args, **kwargs):
         metadata = self.load_ins({"instance_path": instance_path, "task_level": task_level})
         context_variables = {
             "working_dir": workplace_name, # TODO: change to the codebase path
@@ -119,9 +119,19 @@ class InnoFlow(FlowModule):
         }
 
         github_result = self.git_search({"metadata": metadata})
-        data_module = importlib.import_module(f"benchmark.process.dataset_candidate.{category}.metaprompt")
-
-        dataset_description = f"""\
+        
+        # Use custom_task if provided (user question), otherwise load from benchmark
+        import re
+        if custom_task:
+            # User provided a custom task/question
+            final_task = custom_task.strip()
+            # Remove @ mentions from the task
+            final_task = re.sub(r'@\w+\s*', '', final_task).strip()
+            actual_references = references if references and references.strip() else ""
+            # Try to load benchmark for dataset info, but use custom task
+            try:
+                data_module = importlib.import_module(f"benchmark.process.dataset_candidate.{category}.metaprompt")
+                dataset_description = f"""\
 You should select SEVERAL datasets as experimental datasets from the following description:
 {data_module.DATASET}
 
@@ -136,30 +146,87 @@ And the evaluation metrics are:
 
 {data_module.REF}
 """
+            except (ImportError, AttributeError):
+                dataset_description = "Please select appropriate datasets for the given task."
+        else:
+            # Use benchmark task
+            try:
+                data_module = importlib.import_module(f"benchmark.process.dataset_candidate.{category}.metaprompt")
+                final_task = data_module.TASK
+                actual_references = references if references and references.strip() else ""
+                dataset_description = f"""\
+You should select SEVERAL datasets as experimental datasets from the following description:
+{data_module.DATASET}
+
+We have already selected the following baselines for these datasets:
+{data_module.BASELINE}
+
+The performance comparison of these datasets:
+{data_module.COMPARISON}
+
+And the evaluation metrics are:
+{data_module.EVALUATION}
+
+{data_module.REF}
+"""
+            except (ImportError, AttributeError):
+                final_task = "Complete the machine learning task."
+                actual_references = references if references and references.strip() else ""
+                dataset_description = "Please select appropriate datasets for the given task."
         
-        query = f"""\
+        # Search for papers - either from provided references or based on the task
+        if actual_references:
+            # User provided specific references
+            query = f"""\
 You are given a list of papers, searching results of the papers on GitHub. 
 List of papers:
-{references}
+{actual_references}
 
 Searching results of the papers on GitHub:
 {github_result}
 
 Your task is to choose at least 5 repositories as the reference codebases. Note that this time there is no innovative ideas, you should choose the most valuable repositories as the reference codebases.
 """
+        else:
+            # No specific references, search based on the task
+            query = f"""\
+You are given a task:
+{final_task}
+
+Searching results of relevant papers on GitHub:
+{github_result}
+
+Your task is to search for and choose at least 5 repositories as the reference codebases that are relevant to the given task. Note that this time there is no innovative ideas, you should choose the most valuable repositories as the reference codebases.
+"""
         messages = [{"role": "user", "content": query}]
         prepare_messages, context_variables = await self.prepare_agent(messages, context_variables)
         prepare_res = prepare_messages[-1]["content"]
         prepare_dict = extract_json_from_output(prepare_res)
-        paper_list = prepare_dict["reference_papers"]
-        download_res = self.download_papaer({"paper_list": paper_list, "local_root": local_root, "workplace_name": workplace_name})
-
+        paper_list = prepare_dict.get("reference_papers", [])
+        if paper_list:
+            download_res = self.download_papaer({"paper_list": paper_list, "local_root": local_root, "workplace_name": workplace_name})
+        else:
+            download_res = "No papers were selected for download. The agent will proceed with general knowledge."
+        
+        # Add mode-specific instructions
+        mode_instructions = ""
+        if mode == "Idea Spark":
+            mode_instructions = "\n\nMODE: Idea Spark - Focus on quick ideation and generating innovative concepts rapidly. Prioritize speed and creativity while maintaining feasibility."
+        elif mode == "Deep Survey":
+            mode_instructions = "\n\nMODE: Deep Survey - Conduct thorough and comprehensive literature review. Be exhaustive in analyzing papers, identifying gaps, and generating well-researched ideas."
+        elif mode == "Auto Experiment":
+            mode_instructions = "\n\nMODE: Auto Experiment - Generate ideas that are experiment-ready. Focus on ideas that can be quickly validated through experiments and iterative refinement."
+        
+        # Build the reference section separately to avoid f-string backslash issue
+        if actual_references:
+            reference_section = f"And a list of papers for your reference:\n{actual_references}"
+        else:
+            reference_section = "Please use your knowledge and search capabilities to find relevant information and papers for this task."
         
         idea_query = f"""\
 I have a task related to machine learning:
-{data_module.TASK}
-And a list of papers for your reference:
-{references}
+{final_task}
+{reference_section}
 
 I have carefully gone through these papers' github repositories and found download some of them in my local machine, with the following information:
 {prepare_res}
@@ -168,14 +235,20 @@ And I have also downloaded the corresponding paper in the Tex format, with the f
 
 Your task is to thoroughly review research papers and generate innovative ideas for the given task.
 
-Note that the math formula should be as complete as possible.
+Note that the math formula should be as complete as possible.{mode_instructions}
 """
         messages = [{"role": "user", "content": idea_query}]
         context_variables["notes"] = []
         survey_messages, context_variables = await self.idea_agent(messages, context_variables)
         survey_res = survey_messages[-1]["content"]
         ideas = [survey_res]
-        IDEA_NUM = 5
+        # Adjust IDEA_NUM based on mode for different execution styles
+        if mode == "Idea Spark":
+            IDEA_NUM = 3  # Faster, fewer ideas for quick ideation
+        elif mode == "Deep Survey":
+            IDEA_NUM = 7  # More comprehensive, more ideas for thorough research
+        else:  # Auto Experiment or default
+            IDEA_NUM = 5  # Balanced approach
         for i in range(IDEA_NUM - 1):
             messages.extend(survey_messages)
             messages.append({"role": "user", "content": "please survey again and give me another idea"})
@@ -506,7 +579,18 @@ Note that you should fully utilize the existing code in the directory `/{workpla
 
         print(refine_res)
         
-def main(args, references):
+        # Return the final refined result along with key intermediate results
+        final_result = {
+            "final_result": refine_res if 'refine_res' in locals() else "Research completed",
+            "selected_idea": survey_res if 'survey_res' in locals() else "N/A",
+            "code_survey": code_survey_res if 'code_survey_res' in locals() else "N/A",
+            "plan": plan_res if 'plan_res' in locals() else "N/A",
+            "context_notes": context_variables.get("notes", [])
+        }
+        print(f"[DEBUG] Returning result from forward: {type(final_result)}")
+        return final_result
+        
+def main(args, references, mode="Idea Spark", custom_task=None):
     """
     MAX_ATTEMPTS
 
@@ -549,10 +633,49 @@ def main(args, references):
     setup_dataset(args.category, code_env.local_workplace)
     web_env = BrowserEnv(browsergym_eval_env = None, local_root=env_config.local_root, workplace_name=env_config.workplace_name)
     file_env = RequestsMarkdownBrowser(viewport_size=1024 * 4, local_root=env_config.local_root, workplace_name=env_config.workplace_name, downloads_folder=os.path.join(env_config.local_root, env_config.workplace_name, "downloads"))
-    flow = InnoFlow(cache_path="cache_" + instance_id + "_" + COMPLETION_MODEL.replace("/", "__"), log_path="log_" + instance_id, code_env=code_env, web_env=web_env, file_env=file_env, model=args.model)
+    
+    # Use global log path if available, otherwise use local log
+    import global_state
+    if hasattr(global_state, 'LOG_PATH') and global_state.LOG_PATH:
+        log_path = global_state.LOG_PATH
+        # Ensure absolute path
+        if not os.path.isabs(log_path):
+            log_path = os.path.abspath(log_path)
+    else:
+        log_path = os.path.abspath(f"log_{instance_id}")
+    
+    print(f"[DEBUG] Using log path: {log_path}")
+    # Ensure log directory exists
+    os.makedirs(os.path.dirname(log_path) if os.path.dirname(log_path) else ".", exist_ok=True)
+    
+    flow = InnoFlow(cache_path="cache_" + instance_id + "_" + COMPLETION_MODEL.replace("/", "__"), log_path=log_path, code_env=code_env, web_env=web_env, file_env=file_env, model=args.model)
     # ml_result = await flow(instance_path=instance_path)
-    asyncio.run(flow(instance_path=args.instance_path, task_level=args.task_level, local_root=local_root, workplace_name=args.workplace_name, max_iter_times=args.max_iter_times, category=args.category, references = references))
-    # print(judge_result)
+    try:
+        result = asyncio.run(flow(instance_path=args.instance_path, task_level=args.task_level, local_root=local_root, workplace_name=args.workplace_name, max_iter_times=args.max_iter_times, category=args.category, references=references, mode=mode, custom_task=custom_task))
+        print(f"[DEBUG] run_infer_idea.main: asyncio.run returned: {type(result)}, value: {result if result else 'None'}")
+        if result is None:
+            print("[WARNING] run_infer_idea.main: asyncio.run returned None")
+            # Fallback if forward didn't return anything
+            result = {
+                "final_result": "Research process completed. Check logs for details.",
+                "selected_idea": "N/A",
+                "code_survey": "N/A",
+                "plan": "N/A",
+                "context_notes": []
+            }
+    except Exception as e:
+        print(f"[ERROR] run_infer_idea.main: Exception in asyncio.run: {e}")
+        import traceback
+        traceback.print_exc()
+        result = {
+            "final_result": f"Error during research process: {str(e)}",
+            "selected_idea": "N/A",
+            "code_survey": "N/A",
+            "plan": "N/A",
+            "context_notes": []
+        }
+    print(f"[DEBUG] run_infer_idea.main returning: {type(result)}, value: {result if result else 'None'}")
+    return result
 
 
 

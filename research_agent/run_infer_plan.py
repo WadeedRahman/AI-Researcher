@@ -110,7 +110,7 @@ class InnoFlow(FlowModule):
         self.judge_agent = AgentModule(get_judge_agent(model=CHEEP_MODEL, code_env=code_env, web_env=web_env, file_env=file_env), self.client, cache_path)
         self.survey_agent = AgentModule(get_survey_agent(model=CHEEP_MODEL, file_env=file_env, code_env=code_env), self.client, cache_path)
         self.exp_analyser = AgentModule(get_exp_analyser_agent(model=CHEEP_MODEL, file_env=file_env, code_env=code_env), self.client, cache_path)
-    async def forward(self, instance_path: str, task_level: str, local_root: str, workplace_name: str, max_iter_times: int, category: str, ideas: str, references: str, *args, **kwargs):
+    async def forward(self, instance_path: str, task_level: str, local_root: str, workplace_name: str, max_iter_times: int, category: str, ideas: str, references: str, mode: str = "Idea Spark", *args, **kwargs):
         metadata = self.load_ins({"instance_path": instance_path, "task_level": task_level})
         context_variables = {
             "working_dir": workplace_name, # TODO: change to the codebase path
@@ -139,6 +139,15 @@ Your task is to choose at least 5 repositories as the reference codebases.
         prepare_dict = extract_json_from_output(prepare_res)
         paper_list = prepare_dict["reference_papers"]
         download_res = self.download_papaer({"paper_list": paper_list, "local_root": local_root, "workplace_name": workplace_name})
+        # Add mode-specific instructions
+        mode_instructions = ""
+        if mode == "Idea Spark":
+            mode_instructions = "\n\nMODE: Idea Spark - Focus on quick ideation and fast implementation. Prioritize speed while maintaining quality."
+        elif mode == "Deep Survey":
+            mode_instructions = "\n\nMODE: Deep Survey - Conduct thorough and comprehensive analysis. Be exhaustive in reviewing papers and creating detailed implementation plans."
+        elif mode == "Auto Experiment":
+            mode_instructions = "\n\nMODE: Auto Experiment - Emphasize experimental validation and iterative refinement. Focus on running experiments and analyzing results."
+        
         survey_query = f"""\
 I have an innovative ideas related to machine learning:
 {ideas}
@@ -152,7 +161,7 @@ And I have also downloaded the corresponding paper in the Tex format, with the f
 
 Your task is to do a comprehensive survey on the innovative ideas and the papers, and give me a detailed plan for the implementation.
 
-Note that the math formula should be as complete as possible, and the code implementation should be as complete as possible. Don't use placeholder code.
+Note that the math formula should be as complete as possible, and the code implementation should be as complete as possible. Don't use placeholder code.{mode_instructions}
 """
         messages = [{"role": "user", "content": survey_query}]
         context_variables["notes"] = []
@@ -347,7 +356,18 @@ Your task is to evaluate the implementation, and give a suggestion about the imp
         judge_messages, context_variables = await self.judge_agent(input_messages, context_variables)
         judge_res = judge_messages[-1]["content"]
 
-        MAX_ITER_TIMES = max_iter_times
+        # Adjust max_iter_times based on mode for different execution styles
+        if mode == "Idea Spark":
+            # Idea Spark: Use fewer iterations for faster execution
+            adjusted_max_iter = max(0, max_iter_times - 1) if max_iter_times > 0 else 0
+        elif mode == "Deep Survey":
+            # Deep Survey: Use more iterations for thorough analysis
+            adjusted_max_iter = max_iter_times + 1 if max_iter_times > 0 else 1
+        else:  # Auto Experiment
+            # Auto Experiment: Use default or focus on experiment iterations
+            adjusted_max_iter = max_iter_times
+        
+        MAX_ITER_TIMES = adjusted_max_iter
         for i in range(MAX_ITER_TIMES):
             query = f"""\
 You are given an innovative idea:
@@ -475,7 +495,17 @@ Note that you should fully utilize the existing code in the directory `/{workpla
 
 #         print(refine_res)
         
-def main(args, ideas, references):
+        # Return the final refined result along with key intermediate results
+        final_result = {
+            "final_result": refine_res if 'refine_res' in locals() else "Research completed",
+            "survey_result": survey_res if 'survey_res' in locals() else "N/A",
+            "plan": plan_res if 'plan_res' in locals() else "N/A",
+            "context_notes": context_variables.get("notes", [])
+        }
+        print(f"[DEBUG] Returning result from forward: {type(final_result)}")
+        return final_result
+        
+def main(args, ideas, references, mode="Idea Spark"):
     """
     MAX_ATTEMPTS
 
@@ -518,10 +548,36 @@ def main(args, ideas, references):
     setup_dataset(args.category, code_env.local_workplace)
     web_env = BrowserEnv(browsergym_eval_env = None, local_root=env_config.local_root, workplace_name=env_config.workplace_name)
     file_env = RequestsMarkdownBrowser(viewport_size=1024 * 4, local_root=env_config.local_root, workplace_name=env_config.workplace_name, downloads_folder=os.path.join(env_config.local_root, env_config.workplace_name, "downloads"))
-    flow = InnoFlow(cache_path="cache_" + instance_id + "_" + COMPLETION_MODEL.replace("/", "__"), log_path="log_" + instance_id, code_env=code_env, web_env=web_env, file_env=file_env, model=args.model)
+    
+    # Use global log path if available, otherwise use local log
+    import global_state
+    import os
+    if hasattr(global_state, 'LOG_PATH') and global_state.LOG_PATH:
+        log_path = global_state.LOG_PATH
+        # Ensure absolute path
+        if not os.path.isabs(log_path):
+            log_path = os.path.abspath(log_path)
+    else:
+        log_path = os.path.abspath(f"log_{instance_id}")
+    
+    print(f"[DEBUG] Using log path: {log_path}")
+    # Ensure log directory exists
+    os.makedirs(os.path.dirname(log_path) if os.path.dirname(log_path) else ".", exist_ok=True)
+    
+    flow = InnoFlow(cache_path="cache_" + instance_id + "_" + COMPLETION_MODEL.replace("/", "__"), log_path=log_path, code_env=code_env, web_env=web_env, file_env=file_env, model=args.model)
     # ml_result = await flow(instance_path=instance_path)
-    asyncio.run(flow(instance_path=args.instance_path, task_level=args.task_level, local_root=local_root, workplace_name=args.workplace_name, max_iter_times=args.max_iter_times, category=args.category, ideas = ideas, references = references))
+    result = asyncio.run(flow(instance_path=args.instance_path, task_level=args.task_level, local_root=local_root, workplace_name=args.workplace_name, max_iter_times=args.max_iter_times, category=args.category, ideas=ideas, references=references, mode=mode))
     # print(judge_result)
+    print(f"[DEBUG] run_infer_plan.main returning: {type(result)}, value: {result if result else 'None'}")
+    if result is None:
+        # Fallback if forward didn't return anything
+        result = {
+            "final_result": "Research process completed. Check logs for details.",
+            "survey_result": "N/A",
+            "plan": "N/A",
+            "context_notes": []
+        }
+    return result
 
 
 

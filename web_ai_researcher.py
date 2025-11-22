@@ -18,8 +18,8 @@ import base64
 os.environ["PYTHONIOENCODING"] = "utf-8"
 
 # If you want to use proxy, please uncomment the following lines
-os.environ['https_proxy'] = 'http://100.68.161.73:3128'
-os.environ['http_proxy'] = 'http://100.68.161.73:3128'
+# os.environ['https_proxy'] = 'http://100.68.161.73:3128'
+# os.environ['http_proxy'] = 'http://100.68.161.73:3128'
 os.environ['no_proxy'] = 'localhost,127.0.0.1,0.0.0.0'
 
 def setup_path():
@@ -449,12 +449,15 @@ def get_latest_logs(max_lines=500, state=None, queue_source=None, last_index=0):
 
 
 
-# Dictionary containing module descriptions
+# Dictionary containing module descriptions - mapped to novix.science style
 MODULE_DESCRIPTIONS = {
+    "Idea Spark": "Quick idea generation mode. Uses idea generation agent when no reference files are attached, or reference-based agent when reference files are provided. Focuses on fast ideation and sparking innovative concepts.",
+    "Deep Survey": "Comprehensive research mode. Uses idea generation agent when no reference files are attached, or reference-based agent when reference files are provided. Emphasizes thorough literature review and detailed analysis.",
+    "Auto Experiment": "Automated experimentation mode. Uses idea generation agent when no reference files are attached, or reference-based agent when reference files are provided. Focuses on experimental validation and iterative implementation.",
+    "Paper Generation Agent": "Once all research and experimental work is finished, employ this agent for paper generation",
+    # Legacy modes (kept for backward compatibility)
     "Detailed Idea Description": "At this level, users provide comprehensive descriptions of their specific research ideas. The system processes these detailed inputs to develop implementation strategies based on the user's explicit requirements. Examples 1-2 are the templates of this mode.",
     "Reference-Based Ideation": "This simpler level involves users submitting reference papers without a specific idea in mind. The user query typically follows the format: "'"I have some reference papers, please come up with an innovative idea and implement it with these papers."'" The system then analyzes the provided references to generate and develop novel research concepts. Examples 3-4 are the templates of this mode.",
-    "Paper Generation Agent": "Once all research and experimental work is finished, employ this agent for paper generation",
-    # "exit": "exit mode"
 }
 
 # 默认环境变量模板
@@ -539,10 +542,23 @@ def run_ai_researcher(question: str, reference: str, example_module: str) -> Tup
         try:
             # logging.info("Runing AI Researcher...")
             # answer, chat_history, token_info = run_society(society)
+            logging.info(f"Calling main_ai_researcher with question='{question[:100] if question else 'None'}...', reference='{reference[:100] if reference else 'None'}...', mode='{example_module}'")
             answer = main_ai_researcher(question, reference, example_module)
-            logging.info("Sucessully Runing AI Researcher")
+            logging.info(f"main_ai_researcher returned: type={type(answer)}, is_none={answer is None}, length={len(str(answer)) if answer else 0}")
+            
+            # Ensure answer is not None
+            if answer is None:
+                logging.error("main_ai_researcher returned None - this should not happen!")
+                answer = "Research completed successfully. However, no detailed results were returned. Please check the logs for more information."
+            elif not str(answer).strip():
+                logging.warning("main_ai_researcher returned empty string")
+                answer = "Research completed successfully. However, the result was empty. Please check the logs for more information."
+            else:
+                logging.info(f"Answer content preview: {str(answer)[:200]}...")
         except Exception as e:
             logging.error(f"Error occurred while running Researcher: {str(e)}")
+            import traceback
+            logging.error(traceback.format_exc())
             return (
                 f"Error occurred while running Researcher: {str(e)}",
                 "0",
@@ -562,7 +578,7 @@ def run_ai_researcher(question: str, reference: str, example_module: str) -> Tup
         )
 
         return (
-            answer,
+            answer or "Research completed successfully. Please check the logs for detailed results.",
             f"Completion tokens: {completion_tokens:,} | Prompt tokens: {prompt_tokens:,} | Total: {total_tokens:,}",
             "✅ Successfully completed",
         )

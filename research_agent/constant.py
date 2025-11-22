@@ -22,7 +22,7 @@ def str_to_bool(value):
         return False
     return True  # default return True
 
-
+PLATFORM = os.getenv('PLATFORM', "linux/amd64") 
 DOCKER_WORKPLACE_NAME = os.getenv('DOCKER_WORKPLACE_NAME', 'workplace_meta')
 GITHUB_AI_TOKEN = os.getenv('GITHUB_AI_TOKEN', None)
 AI_USER = os.getenv('AI_USER', "ai-sin")

@@ -3,6 +3,8 @@ from datetime import datetime
 import socket
 import json
 import uuid
+import os
+import sys
 from typing import Callable, List, Dict, Any, Optional, Callable, Union, get_args, get_origin
 from dataclasses import is_dataclass, fields, MISSING
 from pydantic import BaseModel
@@ -77,15 +79,57 @@ def print_markdown(md_path: str, console: Optional[Console] = None):
     console.print(Markdown(md_content))
 
 def single_select_menu(options, message: str = ""):
-    questions = [
-        inquirer.List(
-            'choice',
-            message=message,
-            choices=options,
-        ),
-    ]
-    answers = inquirer.prompt(questions)
-    return answers['choice']
+    """
+    Interactive menu for selecting options. In non-interactive mode (API/server),
+    automatically returns "No" to skip cache and avoid blocking.
+    """
+    # Check if we're in a non-interactive environment (API/server mode)
+    # Use module-level imports (os and sys) to avoid scoping issues
+    
+    # Check multiple indicators of non-interactive mode
+    # Import os module reference locally to avoid any scoping confusion
+    import os as os_module
+    import sys as sys_module
+    
+    try:
+        is_non_interactive = (
+            not sys_module.stdin.isatty() or 
+            hasattr(sys_module, '_called_from_test') or
+            os_module.getenv('NON_INTERACTIVE') == '1' or
+            'uvicorn' in ' '.join(sys_module.argv) or
+            'gunicorn' in ' '.join(sys_module.argv) or
+            'server:app' in ' '.join(sys_module.argv)
+        )
+    except Exception:
+        # If any check fails, assume non-interactive to be safe
+        is_non_interactive = True
+    
+    if is_non_interactive:
+        # Non-interactive mode: return "No" to skip cache (last option is typically "No")
+        # This prevents blocking on interactive prompts
+        selected = options[-1] if options else "No"
+        print(f"[INFO] Non-interactive mode detected: auto-selecting '{selected}' for: {message}")
+        return selected
+    
+    # Interactive mode: use inquirer
+    try:
+        questions = [
+            inquirer.List(
+                'choice',
+                message=message,
+                choices=options,
+            ),
+        ]
+        answers = inquirer.prompt(questions)
+        if answers and 'choice' in answers:
+            return answers['choice']
+        else:
+            # Fallback if prompt was cancelled
+            return options[-1] if options else "No"
+    except (KeyboardInterrupt, EOFError, Exception) as e:
+        # If interactive prompt fails, fall back to "No"
+        print(f"[WARNING] Interactive prompt failed ({e}), defaulting to 'No'")
+        return options[-1] if options else "No"
 
 
 def get_user_confirmation(prompt: str) -> bool:

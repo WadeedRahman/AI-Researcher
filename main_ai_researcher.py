@@ -1,6 +1,7 @@
 import numpy as np
 import argparse
 import os
+import sys
 import asyncio
 import global_state
 from dotenv import load_dotenv
@@ -11,7 +12,13 @@ from dotenv import load_dotenv
 def init_ai_researcher():
     a = 1
 
-def get_args_research(): 
+def get_args_research(argv=None): 
+    """
+    Get research arguments. 
+    - When called from API (argv=[]), parses empty list to use defaults (env vars will override).
+    - When called from CLI (argv=None), parses sys.argv normally.
+    - When argv is explicitly provided, parses that list.
+    """
     parser = argparse.ArgumentParser()
     parser.add_argument("--instance_path", type=str, default="benchmark/gnn.json")
     parser.add_argument('--container_name', type=str, default='paper_eval')
@@ -22,14 +29,38 @@ def get_args_research():
     parser.add_argument("--port", type=int, default=12345)
     parser.add_argument("--max_iter_times", type=int, default=0)
     parser.add_argument("--category", type=str, default="recommendation")
-    args = parser.parse_args()
+    # Check if we're being called from uvicorn/FastAPI (common indicators)
+    if argv is not None:
+        # Explicit argv provided (e.g., from API with empty list)
+        args = parser.parse_args(argv)
+    elif len(sys.argv) > 1 and any(arg in sys.argv for arg in ['server:app', 'uvicorn', '--host', '--port']):
+        # Detected uvicorn/FastAPI invocation - parse empty list to avoid conflicts
+        args = parser.parse_args([])
+    else:
+        # Normal CLI invocation - parse sys.argv
+        args = parser.parse_args()
     return args
 
-def get_args_paper():
+def get_args_paper(argv=None):
+    """
+    Get paper generation arguments.
+    - When called from API (argv=[]), parses empty list to use defaults (env vars will override).
+    - When called from CLI (argv=None), parses sys.argv normally.
+    - When argv is explicitly provided, parses that list.
+    """
     parser = argparse.ArgumentParser()
     parser.add_argument("--research_field", type=str, default="vq")
     parser.add_argument("--instance_id", type=str, default="rotation_vq")
-    args = parser.parse_args()
+    # Check if we're being called from uvicorn/FastAPI (common indicators)
+    if argv is not None:
+        # Explicit argv provided (e.g., from API with empty list)
+        args = parser.parse_args(argv)
+    elif len(sys.argv) > 1 and any(arg in sys.argv for arg in ['server:app', 'uvicorn', '--host', '--port']):
+        # Detected uvicorn/FastAPI invocation - parse empty list to avoid conflicts
+        args = parser.parse_args([])
+    else:
+        # Normal CLI invocation - parse sys.argv
+        args = parser.parse_args()
     return args
 
 def main_ai_researcher(input, reference, mode):
@@ -40,22 +71,137 @@ def main_ai_researcher(input, reference, mode):
     #     model = COMPLETION_MODEL
     #     main_autoagent.mode = mode
     #     global_state.INIT_FLAG = False
+    
+    # Debug logging
+    print(f"[DEBUG] main_ai_researcher called with mode={mode}, INIT_FLAG={global_state.INIT_FLAG}")
+    
     load_dotenv()
-    category = os.getenv("CATEGORY")
-    instance_id = os.getenv("INSTANCE_ID")
-    task_level = os.getenv("TASK_LEVEL")
-    container_name = os.getenv("CONTAINER_NAME")
-    workplace_name = os.getenv("WORKPLACE_NAME")
-    cache_path = os.getenv("CACHE_PATH")
-    port = int(os.getenv("PORT"))
-    max_iter_times = int(os.getenv("MAX_ITER_TIMES"))
+    category = os.getenv("CATEGORY") or "recommendation"
+    instance_id = os.getenv("INSTANCE_ID") or "default_instance"
+    task_level = os.getenv("TASK_LEVEL") or "task1"
+    container_name = os.getenv("CONTAINER_NAME") or "paper_eval"
+    workplace_name = os.getenv("WORKPLACE_NAME") or "workplace"
+    cache_path = os.getenv("CACHE_PATH") or "cache"
+    port = int(os.getenv("PORT") or "12345")
+    max_iter_times = int(os.getenv("MAX_ITER_TIMES") or "0")
 
     
     match mode:
+        case 'Idea Spark' | 'Deep Survey' | 'Auto Experiment':
+            # All three modes use the same routing logic:
+            # - If no reference file: use idea generation agent (run_infer_idea)
+            # - If reference file attached: use reference-based agent (run_infer_plan)
+            # Note: Removed INIT_FLAG check - each API request should be independent
+            # Save original directory to restore later
+            original_dir = os.getcwd()
+            result = None
+            try:
+                current_file_path = os.path.realpath(__file__)
+                current_dir = os.path.dirname(current_file_path)
+                sub_dir = os.path.join(current_dir, "research_agent")
+                os.chdir(sub_dir)
+
+                from research_agent.constant import COMPLETION_MODEL
+                from research_agent import run_infer_idea, run_infer_plan
+
+                args = get_args_research()
+                args.instance_path = f"../benchmark/final/{category}/{instance_id}.json"
+                args.task_level = task_level
+                args.model = COMPLETION_MODEL
+                args.container_name = container_name
+                args.workplace_name = workplace_name
+                args.cache_path = cache_path
+                args.port = port
+                args.max_iter_times = max_iter_times
+                args.category = category
+
+                # Route based on whether reference file is attached
+                if reference and reference.strip():
+                    # Reference file attached: use reference-based agent
+                    try:
+                        research_result = run_infer_plan.main(args, input, reference, mode)
+                        print(f"[DEBUG] main_ai_researcher: run_infer_plan returned: {type(research_result)}")
+                        # Format the result for display
+                        if research_result and isinstance(research_result, dict):
+                            result = f"""# Research Results (Mode: {mode})
+
+## Final Result
+{research_result.get('final_result', 'N/A')}
+
+## Survey Results
+{research_result.get('survey_result', 'N/A')}
+
+## Implementation Plan
+{research_result.get('plan', 'N/A')}
+"""
+                        else:
+                            result = f"Research completed successfully using reference-based agent (mode: {mode}). Results have been generated and saved. Returned type: {type(research_result)}"
+                    except Exception as e:
+                        print(f"[ERROR] run_infer_plan.main failed: {e}")
+                        import traceback
+                        traceback.print_exc()
+                        result = f"Error in research process: {str(e)}"
+                else:
+                    # No reference file: use idea generation agent
+                    # Pass the input as custom_task (user's question), not as references
+                    try:
+                        # Clean the input to remove @ mentions if present
+                        import re
+                        clean_input = re.sub(r'@\w+\s*', '', input if input else "").strip()
+                        print(f"[DEBUG] main_ai_researcher: Calling run_infer_idea.main with input='{clean_input[:50] if clean_input else 'empty'}...', mode='{mode}'")
+                        research_result = run_infer_idea.main(args, references="", mode=mode, custom_task=clean_input)
+                        print(f"[DEBUG] main_ai_researcher: run_infer_idea returned: {type(research_result)}, is_none={research_result is None}, value: {str(research_result)[:200] if research_result else 'None'}...")
+                        
+                        # Format the result for display
+                        if research_result is None:
+                            print("[ERROR] main_ai_researcher: research_result is None - this should not happen!")
+                            result = f"Research process encountered an issue: the idea generation agent did not return any results. Please check the logs for more information. Mode: {mode}, Input: {clean_input[:100] if clean_input else 'empty'}"
+                        elif isinstance(research_result, dict):
+                            # Extract meaningful content from the dict
+                            final_result = research_result.get('final_result', 'N/A')
+                            selected_idea = research_result.get('selected_idea', 'N/A')
+                            code_survey = research_result.get('code_survey', 'N/A')
+                            plan = research_result.get('plan', 'N/A')
+                            
+                            # Build result string
+                            result_parts = [f"# Research Results (Mode: {mode})"]
+                            
+                            if selected_idea and selected_idea != 'N/A':
+                                result_parts.append(f"\n## Selected Idea\n{selected_idea}")
+                            
+                            if final_result and final_result != 'N/A':
+                                result_parts.append(f"\n## Final Refined Result\n{final_result}")
+                            
+                            if code_survey and code_survey != 'N/A':
+                                result_parts.append(f"\n## Code Survey\n{code_survey}")
+                            
+                            if plan and plan != 'N/A':
+                                result_parts.append(f"\n## Implementation Plan\n{plan}")
+                            
+                            result = "\n".join(result_parts) if len(result_parts) > 1 else f"Research completed successfully using idea generation agent (mode: {mode}). Results have been generated and saved."
+                        else:
+                            # If it's not a dict, convert to string
+                            result = str(research_result) if research_result else f"Research completed successfully using idea generation agent (mode: {mode}). Results have been generated and saved."
+                    except Exception as e:
+                        print(f"[ERROR] run_infer_idea.main failed: {e}")
+                        import traceback
+                        traceback.print_exc()
+                        result = f"Error in research process: {str(e)}"
+            finally:
+                # Always restore original directory
+                os.chdir(original_dir)
+            
+            # Ensure we always return a result
+            if result is None:
+                result = f"Research process completed but no results were returned. Please check the logs for more information. Mode: {mode}"
+            
+            return result
         case 'Detailed Idea Description':
-            # global INIT_FLAG
-            if global_state.INIT_FLAG is False:
-                global_state.INIT_FLAG = True
+            # Note: INIT_FLAG check removed - JobManager handles concurrency
+            # Each job runs independently through the job queue
+            original_dir = os.getcwd()
+            result = None
+            try:
                 current_file_path = os.path.realpath(__file__)
                 current_dir = os.path.dirname(current_file_path)
                 sub_dir = os.path.join(current_dir, "research_agent")
@@ -77,12 +223,36 @@ def main_ai_researcher(input, reference, mode):
                 args.max_iter_times = max_iter_times
                 args.category = category
 
-                run_infer_plan.main(args, input, reference)
-                global_state.INIT_FLAG = False
+                research_result = run_infer_plan.main(args, input, reference)
+                
+                # Format the result for display
+                if research_result and isinstance(research_result, dict):
+                    result = f"""# Research Results (Mode: Detailed Idea Description)
+
+## Final Result
+{research_result.get('final_result', 'N/A')}
+
+## Survey Results
+{research_result.get('survey_result', 'N/A')}
+
+## Implementation Plan
+{research_result.get('plan', 'N/A')}
+"""
+                else:
+                    result = f"Research completed successfully using Detailed Idea Description mode. Results have been generated and saved."
+            finally:
+                os.chdir(original_dir)
+            
+            if result is None:
+                result = f"Research process completed but no results were returned. Please check the logs for more information."
+            
+            return result
         case 'Reference-Based Ideation':
-            # clear_screen()
-            if global_state.INIT_FLAG is False:
-                global_state.INIT_FLAG = True
+            # Note: INIT_FLAG check removed - JobManager handles concurrency
+            # Each job runs independently through the job queue
+            original_dir = os.getcwd()
+            result = None
+            try:
                 current_file_path = os.path.realpath(__file__)
                 current_dir = os.path.dirname(current_file_path)
                 sub_dir = os.path.join(current_dir, "research_agent")
@@ -114,13 +284,46 @@ def main_ai_researcher(input, reference, mode):
                 args.max_iter_times = max_iter_times
                 args.category = category
 
-                run_infer_idea.main(args, reference)
-                global_state.INIT_FLAG = False
+                research_result = run_infer_idea.main(args, reference)
+                
+                # Format the result for display
+                if research_result and isinstance(research_result, dict):
+                    final_result = research_result.get('final_result', 'N/A')
+                    selected_idea = research_result.get('selected_idea', 'N/A')
+                    code_survey = research_result.get('code_survey', 'N/A')
+                    plan = research_result.get('plan', 'N/A')
+                    
+                    # Build result string
+                    result_parts = [f"# Research Results (Mode: Reference-Based Ideation)"]
+                    
+                    if selected_idea and selected_idea != 'N/A':
+                        result_parts.append(f"\n## Selected Idea\n{selected_idea}")
+                    
+                    if final_result and final_result != 'N/A':
+                        result_parts.append(f"\n## Final Refined Result\n{final_result}")
+                    
+                    if code_survey and code_survey != 'N/A':
+                        result_parts.append(f"\n## Code Survey\n{code_survey}")
+                    
+                    if plan and plan != 'N/A':
+                        result_parts.append(f"\n## Implementation Plan\n{plan}")
+                    
+                    result = "\n".join(result_parts) if len(result_parts) > 1 else f"Research completed successfully using Reference-Based Ideation mode. Results have been generated and saved."
+                else:
+                    result = f"Research completed successfully using Reference-Based Ideation mode. Results have been generated and saved."
+            finally:
+                os.chdir(original_dir)
+            
+            if result is None:
+                result = f"Research process completed but no results were returned. Please check the logs for more information."
+            
+            return result
         case 'Paper Generation Agent':
             # clear_screen()
-            if global_state.INIT_FLAG is False:
-                global_state.INIT_FLAG = True
-
+            result = None
+            # Note: INIT_FLAG check removed - JobManager handles concurrency
+            # Each job runs independently through the job queue
+            try:
                 from paper_agent import writing
                 args = get_args_paper()
 
@@ -129,5 +332,52 @@ def main_ai_researcher(input, reference, mode):
                 args.research_field = research_field
                 args.instance_id = instance_id
 
+                # Validate that the required directory structure exists
+                proj_dir = f'./paper_agent/{research_field}/{instance_id}/'
+                if not os.path.exists(proj_dir):
+                    error_msg = (
+                        f"Paper Generation Agent requires a completed research job.\n"
+                        f"Expected directory not found: {proj_dir}\n\n"
+                        f"Please run one of the following agents first:\n"
+                        f"  - 'Idea Spark'\n"
+                        f"  - 'Deep Survey'\n"
+                        f"  - 'Auto Experiment'\n"
+                        f"  - 'Detailed Idea Description'\n"
+                        f"  - 'Reference-Based Ideation'\n\n"
+                        f"These agents will create the necessary directory structure at:\n"
+                        f"  {proj_dir}\n\n"
+                        f"Current environment variables:\n"
+                        f"  CATEGORY={category}\n"
+                        f"  INSTANCE_ID={instance_id}"
+                    )
+                    raise FileNotFoundError(error_msg)
+                
+                # Check for cache directories
+                try:
+                    cache_dirs = [d for d in os.listdir(proj_dir) if d.startswith('cache_')]
+                    if not cache_dirs:
+                        error_msg = (
+                            f"Paper Generation Agent requires completed research results.\n"
+                            f"Directory exists but no cache directories found in: {proj_dir}\n\n"
+                            f"Please ensure a research job has completed successfully.\n"
+                            f"The research job should create cache directories containing agent outputs."
+                        )
+                        raise ValueError(error_msg)
+                except PermissionError:
+                    error_msg = (
+                        f"Permission denied accessing directory: {proj_dir}\n"
+                        f"Please check file permissions."
+                    )
+                    raise PermissionError(error_msg)
+
                 asyncio.run(writing.writing(args.research_field, args.instance_id))
-                global_state.INIT_FLAG = False
+                result = f"Paper generation completed successfully for {research_field}/{instance_id}. Paper has been generated and saved."
+            except Exception as e:
+                # Re-raise exceptions so they're properly handled by JobManager
+                raise
+            
+            # Ensure we always return a result
+            if result is None:
+                result = f"Paper generation process completed but no result was returned. Please check the logs for more information."
+            
+            return result
