@@ -687,8 +687,22 @@ def main(args, references, mode="Idea Spark", custom_task=None):
         print(f"[ERROR] run_infer_idea.main: Exception in asyncio.run: {e}")
         import traceback
         traceback.print_exc()
+        
+        # Extract underlying exception from RetryError for better error reporting
+        error_message = str(e)
+        error_type = type(e).__name__
+        
+        # Check if it's a RetryError and extract the underlying exception
+        if error_type == "RetryError" and hasattr(e, 'last_attempt'):
+            if e.last_attempt and e.last_attempt.outcome:
+                underlying_exception = e.last_attempt.outcome.exception()
+                if underlying_exception:
+                    error_type = type(underlying_exception).__name__
+                    error_message = str(underlying_exception)
+                    print(f"[ERROR] Underlying exception: {error_type} - {error_message}")
+        
         result = {
-            "final_result": f"Error during research process: {str(e)}",
+            "final_result": f"Error during research process: {error_type} - {error_message}",
             "selected_idea": "N/A",
             "code_survey": "N/A",
             "plan": "N/A",

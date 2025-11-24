@@ -28,7 +28,8 @@ from tenacity import (
     stop_after_attempt,
     wait_exponential,
     retry_if_exception_type, 
-    RetryCallState
+    RetryCallState,
+    RetryError
 )
 from openai import AsyncOpenAI
 from research_agent.constant import  API_BASE_URL, NOT_SUPPORT_SENDER, MUST_ADD_USER, NOT_SUPPORT_FN_CALL, NOT_USE_FN_CALL
@@ -446,6 +447,52 @@ class MetaChain:
                 stream=stream,
                 debug=debug,
             )
+        except RetryError as retry_err:
+            # Extract the underlying exception from RetryError
+            if retry_err.last_attempt and retry_err.last_attempt.outcome:
+                underlying_exception = retry_err.last_attempt.outcome.exception()
+                if underlying_exception:
+                    self.logger.info(
+                        f"All retry attempts exhausted. Original error: {type(underlying_exception).__name__} - {str(underlying_exception)}",
+                        title="Retry Exhausted",
+                        color="red"
+                    )
+                    # Check if it's a context window error that we can handle
+                    if isinstance(underlying_exception, (ContextWindowExceededError, BadRequestError)):
+                        error_msg = str(underlying_exception)
+                        if "context length" in error_msg.lower() or "context_length_exceeded" in error_msg:
+                            if history and len(history) > 0:
+                                last_message = history[-1]
+                                if isinstance(last_message.get('content'), str):
+                                    last_message['content'] = truncate_message(
+                                        last_message['content'],
+                                    )
+                                    self.logger.info(
+                                        f"消息已截断以适应上下文长度限制", 
+                                        title="Message Truncated", 
+                                        color="yellow"
+                                    )
+                                    # Try one more time after truncation
+                                    try:
+                                        return await self.get_chat_completion_async(
+                                            agent=agent,
+                                            history=history,
+                                            context_variables=context_variables,
+                                            model_override=model_override,
+                                            stream=stream,
+                                            debug=debug,
+                                        )
+                                    except Exception as e:
+                                        self.logger.info(
+                                            f"Failed after truncation: {type(e).__name__} - {str(e)}",
+                                            title="Truncation Retry Failed",
+                                            color="red"
+                                        )
+                                        raise underlying_exception
+                    # Re-raise the underlying exception
+                    raise underlying_exception
+            # If we can't extract the underlying exception, raise the RetryError
+            raise retry_err
         except (ContextWindowExceededError, BadRequestError) as e:
             error_msg = str(e)
             # 检查是否是上下文长度超限错误
@@ -512,9 +559,27 @@ class MetaChain:
                     stream=stream,
                     debug=debug,
                 )
+            except RetryError as retry_err:
+                # Extract underlying exception from RetryError for better error reporting
+                error_msg = "RetryError: All retry attempts exhausted"
+                if retry_err.last_attempt and retry_err.last_attempt.outcome:
+                    underlying_exception = retry_err.last_attempt.outcome.exception()
+                    if underlying_exception:
+                        error_msg = f"RetryError: All retry attempts exhausted. Original error: {type(underlying_exception).__name__} - {str(underlying_exception)}"
+                        self.logger.info(error_msg, title="Retry Exhausted", color="red")
+                        history.append({"role": "error", "content": f"Error: {type(underlying_exception).__name__} - {str(underlying_exception)}"})
+                    else:
+                        self.logger.info(error_msg, title="Retry Exhausted", color="red")
+                        history.append({"role": "error", "content": f"Error: {error_msg}"})
+                else:
+                    self.logger.info(error_msg, title="Retry Exhausted", color="red")
+                    history.append({"role": "error", "content": f"Error: {error_msg}"})
+                break
             except Exception as e:
-                self.logger.info(f"Error: {e}", title="Error", color="red")
-                history.append({"role": "error", "content": f"Error: {e}"})
+                error_type = type(e).__name__
+                error_str = str(e)
+                self.logger.info(f"Error: {error_type} - {error_str}", title="Error", color="red")
+                history.append({"role": "error", "content": f"Error: {error_type} - {error_str}"})
                 break
             message: Message = completion_response.choices[0].message
             # Convert to dict first, then add sender to avoid Pydantic serialization issues
