@@ -40,21 +40,18 @@
             <span class="agent-icon">💡</span>
             <div class="agent-details">
               <strong>Idea Spark</strong>
-              <span>Quick ideation - uses idea agent (no refs) or reference agent (with refs)</span>
             </div>
           </div>
           <div class="quick-select-item" @click="selectAgent('Deep Survey')">
             <span class="agent-icon">🔍</span>
             <div class="agent-details">
               <strong>Deep Survey</strong>
-              <span>Comprehensive research - uses idea agent (no refs) or reference agent (with refs)</span>
             </div>
           </div>
           <div class="quick-select-item" @click="selectAgent('Auto Experiment')">
             <span class="agent-icon">⚗️</span>
             <div class="agent-details">
               <strong>Auto Experiment</strong>
-              <span>Experimental validation - uses idea agent (no refs) or reference agent (with refs)</span>
             </div>
           </div>
         </div>
@@ -360,7 +357,7 @@ async function handleSendMessage() {
   try {
     const payload: RunRequest = {
       question: userMessage,
-      reference: reference || undefined,
+      reference: reference || '', // Standardize to empty string instead of undefined
       mode: mode,
     }
 
@@ -396,7 +393,18 @@ async function pollJobStatus(jobId: string, messageIndex: number) {
   startStreaming()
 
   // Store interval for cleanup
-  const pollInterval = setInterval(async () => {
+  let pollInterval: NodeJS.Timeout | null = null
+  
+  const cleanup = () => {
+    if (pollInterval) {
+      clearInterval(pollInterval)
+      pollInterval = null
+    }
+    activePollingIntervals.value.delete(jobId)
+    stop()
+  }
+
+  pollInterval = setInterval(async () => {
     try {
       // Fetch latest job status
       await jobStore.fetchJob(jobId)
@@ -404,6 +412,7 @@ async function pollJobStatus(jobId: string, messageIndex: number) {
 
       if (!job) {
         console.warn(`Job ${jobId} not found`)
+        cleanup()
         return
       }
 
@@ -498,9 +507,7 @@ async function pollJobStatus(jobId: string, messageIndex: number) {
 
       // Check if job is complete
       if (job.status === 'succeeded' || job.status === 'failed' || job.status === 'cancelled') {
-        clearInterval(pollInterval)
-        activePollingIntervals.value.delete(jobId)
-        stop()
+        cleanup()
 
         // Check if all active jobs are done
         const allJobsDone = Array.from(activePollingIntervals.value.keys()).length === 0
@@ -511,99 +518,64 @@ async function pollJobStatus(jobId: string, messageIndex: number) {
         }
 
         if (job.status === 'succeeded') {
-          // Get final content from result first (most reliable), then fall back to logs
-          let finalContent = ''
-          
-          console.log(`[DEBUG] Job ${jobId} succeeded. Result type: ${typeof job.result}, value:`, job.result)
-          console.log(`[DEBUG] Job ${jobId} full job object:`, JSON.stringify(job, null, 2))
-          
-          // Check job.result first - this contains the actual answer from the backend
-          // The structure should be: { answer: string, token_count: string, status: string }
-          if (job.result) {
-            if (typeof job.result === 'string') {
-              // If result is a string, use it directly
-              finalContent = job.result
-              console.log(`[DEBUG] Job ${jobId}: Using string result, length: ${finalContent.length}`)
-            } else if (typeof job.result === 'object' && job.result !== null) {
-              // Handle structured result object
-              if (job.result.answer && typeof job.result.answer === 'string') {
-                finalContent = job.result.answer
-                console.log(`[DEBUG] Job ${jobId}: Using result.answer, length: ${finalContent.length}`)
-              } else if (job.result.answer) {
-                // If answer is not a string, convert it
-                finalContent = String(job.result.answer)
-                console.log(`[DEBUG] Job ${jobId}: Converted result.answer to string, length: ${finalContent.length}`)
-              } else {
-                // Fallback: try to extract any meaningful content
-                const answerKeys = ['answer', 'result', 'content', 'output', 'response', 'data']
-                for (const key of answerKeys) {
-                  if (job.result[key] && typeof job.result[key] === 'string') {
-                    finalContent = job.result[key]
-                    console.log(`[DEBUG] Job ${jobId}: Found content in key '${key}', length: ${finalContent.length}`)
-                    break
-                  }
+          // Simplified result extraction function
+          const extractResult = (result: any): string => {
+            if (!result) return ''
+            
+            // Handle string result
+            if (typeof result === 'string') {
+              return result.trim()
+            }
+            
+            // Handle object result - check for answer field first
+            if (typeof result === 'object' && result !== null) {
+              // Primary: check for answer field
+              if (result.answer) {
+                const answer = typeof result.answer === 'string' ? result.answer : String(result.answer)
+                if (answer.trim().length > 0) {
+                  return answer.trim()
                 }
-                // Last resort: stringify the whole object (but only if it's not empty)
-                if (!finalContent && Object.keys(job.result).length > 0) {
-                  // Try to find any string value in the object
-                  for (const [key, value] of Object.entries(job.result)) {
-                    if (typeof value === 'string' && value.length > 10) {
-                      finalContent = value
-                      console.log(`[DEBUG] Job ${jobId}: Using value from key '${key}', length: ${finalContent.length}`)
-                      break
-                    }
-                  }
-                  // If still no content, stringify
-                  if (!finalContent) {
-                    finalContent = JSON.stringify(job.result, null, 2)
-                    console.log(`[DEBUG] Job ${jobId}: Stringified entire result object`)
-                  }
+              }
+              
+              // Secondary: check common result keys
+              const resultKeys = ['result', 'content', 'output', 'response']
+              for (const key of resultKeys) {
+                if (result[key] && typeof result[key] === 'string' && result[key].trim().length > 0) {
+                  return result[key].trim()
                 }
               }
             }
+            
+            return ''
           }
           
-          // If no result or result is a status message, try to get content from logs
-          // Also check for other error/status messages that indicate no real content
-          const statusMessagePatterns = [
-            'Research job is already in progress',
-            'already in progress',
-            'Please wait for the current job to complete',
-            'Paper Generation Agent job is already in progress',
-            'job is already in progress'
-          ]
-          
-          const isStatusMessage = finalContent && (
-            statusMessagePatterns.some(pattern => finalContent.toLowerCase().includes(pattern.toLowerCase())) ||
-            finalContent.trim().length < 50
-          )
-          
-          if (isStatusMessage) {
-            console.warn(`[WARNING] Job ${jobId}: Detected status message instead of result:`, finalContent.substring(0, 200))
+          // Check for status messages that indicate no real content
+          const isStatusMessage = (content: string): boolean => {
+            if (!content || content.trim().length < 50) return true
+            const statusPatterns = [
+              'already in progress',
+              'please wait',
+              'job is already'
+            ]
+            return statusPatterns.some(pattern => content.toLowerCase().includes(pattern))
           }
           
-          if (!finalContent || isStatusMessage || finalContent.trim() === '') {
-            console.log(`[DEBUG] Job ${jobId}: Result insufficient (isStatusMessage=${isStatusMessage}, length=${finalContent?.length || 0}), fetching logs...`)
+          // Extract result from job.result
+          let finalContent = extractResult(job.result)
+          
+          // If result is insufficient or looks like a status message, try logs
+          if (!finalContent || isStatusMessage(finalContent)) {
             try {
               await logsStore.fetchJobLogs(jobId)
               const allLogs = logsStore.getJobLogs(jobId)
-              const allAssistantMessages = allLogs
-                .filter(log => log.assistant)
-                .map(log => log.assistant)
-                .filter((msg): msg is string => msg !== null && msg.length > 0)
+              const assistantMessages = allLogs
+                .filter(log => log.assistant && typeof log.assistant === 'string' && log.assistant.trim().length > 0)
+                .map(log => log.assistant as string)
               
-              if (allAssistantMessages.length > 0) {
-                const logContent = allAssistantMessages.join('\n\n')
-                console.log(`[DEBUG] Job ${jobId}: Found ${allAssistantMessages.length} assistant messages in logs, total length: ${logContent.length}`)
-                // Use log content if we don't have result or if result is just a status message
-                if (!finalContent || isStatusMessage) {
-                  finalContent = logContent
-                } else {
-                  // Combine result with logs for more complete information
-                  finalContent = finalContent + '\n\n---\n\n' + logContent
-                }
-              } else {
-                console.log(`[DEBUG] Job ${jobId}: No assistant messages found in logs`)
+              if (assistantMessages.length > 0) {
+                const logContent = assistantMessages.join('\n\n')
+                // Use log content if we don't have result, otherwise combine
+                finalContent = finalContent ? `${finalContent}\n\n---\n\n${logContent}` : logContent
               }
             } catch (err) {
               console.error('Could not fetch final logs:', err)
@@ -613,10 +585,7 @@ async function pollJobStatus(jobId: string, messageIndex: number) {
           // Final fallback
           if (!finalContent || finalContent.trim().length === 0) {
             finalContent = 'Research completed successfully! Please check the logs for detailed results.'
-            console.warn(`[WARNING] Job ${jobId}: No content found, using fallback message`)
           }
-          
-          console.log(`[DEBUG] Job ${jobId} final content length: ${finalContent.length}, preview: ${finalContent.substring(0, 200)}`)
           
           messages.value[messageIndex] = {
             role: 'assistant',
@@ -642,12 +611,20 @@ async function pollJobStatus(jobId: string, messageIndex: number) {
       }
     } catch (err) {
       console.error('Error polling job status:', err)
-      // Don't stop polling on error, just log it
+      // On persistent errors, stop polling to prevent infinite loops
+      const errorMessage = err instanceof Error ? err.message : String(err)
+      if (errorMessage.includes('404') || errorMessage.includes('not found')) {
+        console.warn(`Job ${jobId} not found, stopping polling`)
+        cleanup()
+      }
+      // For other errors, continue polling but log them
     }
   }, 3000) // Poll every 3 seconds
 
   // Store interval for cleanup
-  activePollingIntervals.value.set(jobId, pollInterval)
+  if (pollInterval) {
+    activePollingIntervals.value.set(jobId, pollInterval)
+  }
 
   // Initial fetch
   try {
