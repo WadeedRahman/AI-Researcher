@@ -12,6 +12,9 @@ export default defineConfig({
   },
   server: {
     port: 5173,
+      allowedHosts: [
+          'novix.videmak.net'
+      ],
     proxy: {
       '/api': {
         target: 'http://localhost:8080',

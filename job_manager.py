@@ -171,25 +171,25 @@ class JobManager:
                                 "Auto Experiment"
                             ]
                             if mode in research_modes:
-                            # Submit paper generation job automatically (in a separate thread to avoid blocking)
-                            import threading
-                            def submit_paper_job():
-                                try:
-                                    paper_payload = {
-                                        "question": job.payload.get("question", ""),
-                                        "reference": job.payload.get("reference", ""),
-                                        "mode": "Paper Generation Agent"
-                                    }
-                                    paper_job = self.submit(paper_payload)
-                                    # Link the paper job to the research job in metadata
-                                    with self._lock:
-                                        paper_job.metadata["parent_job_id"] = job.id
-                                        job.metadata["paper_job_id"] = paper_job.id
-                                except Exception as e:
-                                    print(f"Error submitting paper generation job: {e}")
-                            
-                            # Submit in background thread to avoid blocking
-                            threading.Thread(target=submit_paper_job, daemon=True).start()
+                                # Submit paper generation job automatically (in a separate thread to avoid blocking)
+                                import threading
+                                def submit_paper_job():
+                                    try:
+                                        paper_payload = {
+                                            "question": job.payload.get("question", ""),
+                                            "reference": job.payload.get("reference", ""),
+                                            "mode": "Paper Generation Agent"
+                                        }
+                                        paper_job = self.submit(paper_payload)
+                                        # Link the paper job to the research job in metadata
+                                        with self._lock:
+                                            paper_job.metadata["parent_job_id"] = job.id
+                                            job.metadata["paper_job_id"] = paper_job.id
+                                    except Exception as e:
+                                        print(f"Error submitting paper generation job: {e}")
+                                
+                                # Submit in background thread to avoid blocking
+                                threading.Thread(target=submit_paper_job, daemon=True).start()
             except Exception as e:
                 with self._lock:
                     if job.status != JobStatus.CANCELLED:
