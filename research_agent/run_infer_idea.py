@@ -67,6 +67,8 @@ def get_args():
     parser.add_argument("--cache_path", type=str, default="cache")
     parser.add_argument("--port", type=int, default=12345)
     parser.add_argument("--max_iter_times", type=int, default=0)
+    parser.add_argument("--skip_ml", action="store_true", help="Skip ML agent execution to save tokens")
+    parser.add_argument("--enable-code", action="store_true", help="Enable code implementation (default: paper writing only)")
     parser.add_argument("--category", type=str, default="recommendation")
     args = parser.parse_args()
     return args
@@ -111,14 +113,19 @@ class InnoFlow(FlowModule):
         # self.survey_agent = AgentModule(get_survey_agent(model=CHEEP_MODEL, file_env=file_env, code_env=code_env), self.client, cache_path)
         self.code_survey_agent = AgentModule(get_code_survey_agent(model=CHEEP_MODEL, file_env=file_env, code_env=code_env), self.client, cache_path)
         self.exp_analyser = AgentModule(get_exp_analyser_agent(model=CHEEP_MODEL, file_env=file_env, code_env=code_env), self.client, cache_path)
-    async def forward(self, instance_path: str, task_level: str, local_root: str, workplace_name: str, max_iter_times: int, category: str, references: str, mode: str = "Idea Spark", custom_task: str = None, *args, **kwargs):
+    async def forward(self, instance_path: str, task_level: str, local_root: str, workplace_name: str, max_iter_times: int, category: str, references: str, mode: str = "Idea Spark", custom_task: str = None, skip_ml: bool = False, paper_writing_only: bool = False, *args, **kwargs):
         metadata = self.load_ins({"instance_path": instance_path, "task_level": task_level})
         context_variables = {
             "working_dir": workplace_name, # TODO: change to the codebase path
             "date_limit": metadata["date_limit"],
         }
 
-        github_result = self.git_search({"metadata": metadata})
+        # Skip GitHub code search if paper_writing_only mode (saves tokens, not needed for articles)
+        if paper_writing_only:
+            print("[INFO] Paper Writing Only mode: Skipping GitHub code search")
+            github_result = "Code search skipped - paper writing only mode"
+        else:
+            github_result = self.git_search({"metadata": metadata})
         
         # Use custom_task if provided (user question), otherwise load from benchmark
         import re
@@ -174,10 +181,17 @@ And the evaluation metrics are:
                 actual_references = references if references and references.strip() else ""
                 dataset_description = "Please select appropriate datasets for the given task."
         
-        # Search for papers - either from provided references or based on the task
-        if actual_references:
-            # User provided specific references
-            query = f"""\
+        # Skip codebase preparation if paper_writing_only mode
+        if paper_writing_only:
+            print("[INFO] Paper Writing Only mode: Skipping codebase preparation")
+            prepare_res = "Codebase preparation skipped - paper writing only mode. Using provided references only."
+            paper_list = []
+            download_res = "No codebases selected - paper writing only mode."
+        else:
+            # Search for papers - either from provided references or based on the task
+            if actual_references:
+                # User provided specific references
+                query = f"""\
 You are given a list of papers, searching results of the papers on GitHub. 
 List of papers:
 {actual_references}
@@ -187,9 +201,9 @@ Searching results of the papers on GitHub:
 
 Your task is to choose at least 5 repositories as the reference codebases. Note that this time there is no innovative ideas, you should choose the most valuable repositories as the reference codebases.
 """
-        else:
-            # No specific references, search based on the task
-            query = f"""\
+            else:
+                # No specific references, search based on the task
+                query = f"""\
 You are given a task:
 {final_task}
 
@@ -198,15 +212,15 @@ Searching results of relevant papers on GitHub:
 
 Your task is to search for and choose at least 5 repositories as the reference codebases that are relevant to the given task. Note that this time there is no innovative ideas, you should choose the most valuable repositories as the reference codebases.
 """
-        messages = [{"role": "user", "content": query}]
-        prepare_messages, context_variables = await self.prepare_agent(messages, context_variables)
-        prepare_res = prepare_messages[-1]["content"]
-        prepare_dict = extract_json_from_output(prepare_res)
-        paper_list = prepare_dict.get("reference_papers", [])
-        if paper_list:
-            download_res = self.download_papaer({"paper_list": paper_list, "local_root": local_root, "workplace_name": workplace_name})
-        else:
-            download_res = "No papers were selected for download. The agent will proceed with general knowledge."
+            messages = [{"role": "user", "content": query}]
+            prepare_messages, context_variables = await self.prepare_agent(messages, context_variables)
+            prepare_res = prepare_messages[-1]["content"]
+            prepare_dict = extract_json_from_output(prepare_res)
+            paper_list = prepare_dict.get("reference_papers", [])
+            if paper_list:
+                download_res = self.download_papaer({"paper_list": paper_list, "local_root": local_root, "workplace_name": workplace_name})
+            else:
+                download_res = "No papers were selected for download. The agent will proceed with general knowledge."
         
         # Add mode-specific instructions
         mode_instructions = ""
@@ -242,16 +256,25 @@ Note that the math formula should be as complete as possible.{mode_instructions}
         survey_messages, context_variables = await self.idea_agent(messages, context_variables)
         survey_res = survey_messages[-1]["content"]
         ideas = [survey_res]
-        # Adjust IDEA_NUM based on mode for different execution styles
+        # CRITICAL: Reduce idea generation to save tokens (was 3-7, now 1-2)
+        # Environment variable can override: IDEA_NUM (default: 1 for minimal token usage)
+        IDEA_NUM = int(os.getenv("IDEA_NUM", "1"))  # Default to 1 idea only
         if mode == "Idea Spark":
-            IDEA_NUM = 3  # Faster, fewer ideas for quick ideation
+            IDEA_NUM = min(IDEA_NUM, 2)  # Cap at 2 for Idea Spark
         elif mode == "Deep Survey":
-            IDEA_NUM = 7  # More comprehensive, more ideas for thorough research
+            IDEA_NUM = min(IDEA_NUM, 3)  # Cap at 3 for Deep Survey
         else:  # Auto Experiment or default
-            IDEA_NUM = 5  # Balanced approach
+            IDEA_NUM = min(IDEA_NUM, 2)  # Cap at 2 for others
         
-        # Limit message history to prevent context window overflow
-        MAX_MESSAGE_HISTORY = 20  # Keep last 20 messages to avoid context overflow
+        # CRITICAL: Aggressive message history trimming to prevent token explosion
+        MAX_MESSAGE_HISTORY = int(os.getenv("MAX_MESSAGE_HISTORY", "5"))  # Reduced from 20 to 5
+        
+        def trim_message_history(msgs, max_len=MAX_MESSAGE_HISTORY):
+            """Trim message history to prevent token explosion"""
+            if len(msgs) <= max_len:
+                return msgs
+            # Keep first message (initial prompt) and last max_len-1 messages
+            return [msgs[0]] + msgs[-(max_len-1):]
         for i in range(IDEA_NUM - 1):
             messages.extend(survey_messages)
             # Trim message history if it gets too long
@@ -273,7 +296,24 @@ Your task is to analyze multiple existing ideas, select the most novel one, enha
         survey_res = survey_messages[-1]["content"]
         # print(survey_res)
 
-        code_survey_query = f"""\
+        # Skip code survey if paper_writing_only mode (not needed for article writing)
+        if paper_writing_only:
+            print("[INFO] Paper Writing Only mode: Skipping code survey")
+            code_survey_res = f"""Code Survey Report (Paper Writing Mode - Conceptual Only):
+
+Based on the innovative idea: {survey_res[:500]}
+
+This is a conceptual implementation report for paper writing purposes. The actual code implementation has been skipped.
+
+Key Academic Concepts Identified:
+- The proposed method addresses the challenges outlined in the idea
+- Implementation would follow standard practices in the field
+- Technical approach aligns with the innovative idea
+
+Note: This is a placeholder for paper writing. For actual implementation, run without paper_writing_only mode.
+"""
+        else:
+            code_survey_query = f"""\
 I have an innovative idea related to machine learning:
 {survey_res}
 
@@ -286,21 +326,23 @@ Your task is to carefully understand the innovative idea, and thoroughly review 
 Note that the code implementation should be as complete as possible.
 You have a maximum of 10 iterations to complete this task. If you cannot find all concepts after thorough review, document what you found and proceed.
 """
-        messages = [{"role": "user", "content": code_survey_query}]
-        # Add iteration limit to prevent infinite loops
-        MAX_CODE_SURVEY_ITERATIONS = 10
-        code_survey_messages = None
-        for iteration in range(MAX_CODE_SURVEY_ITERATIONS):
-            code_survey_messages, context_variables = await self.code_survey_agent(messages, context_variables)
-            code_survey_res = code_survey_messages[-1]["content"]
-            # Check if agent indicates completion
-            if "completed" in code_survey_res.lower() or "finished" in code_survey_res.lower() or iteration >= MAX_CODE_SURVEY_ITERATIONS - 1:
-                break
-            # Add continuation message if not complete
-            messages.append({"role": "assistant", "content": code_survey_res})
-            messages.append({"role": "user", "content": "Continue reviewing and ensure all academic concepts are covered."})
-        
-        code_survey_res = code_survey_messages[-1]["content"] if code_survey_messages else "Code survey completed."
+            messages = [{"role": "user", "content": code_survey_query}]
+            # CRITICAL: Reduce code survey iterations (was 10, now 2-3 max)
+            MAX_CODE_SURVEY_ITERATIONS = int(os.getenv("MAX_CODE_SURVEY_ITERATIONS", "2"))  # Reduced from 10 to 2
+            code_survey_messages = None
+            for iteration in range(MAX_CODE_SURVEY_ITERATIONS):
+                # Trim messages before each call to prevent token explosion
+                messages = trim_message_history(messages, max_len=MAX_MESSAGE_HISTORY)
+                code_survey_messages, context_variables = await self.code_survey_agent(messages, context_variables)
+                code_survey_res = code_survey_messages[-1]["content"]
+                # Check if agent indicates completion
+                if "completed" in code_survey_res.lower() or "finished" in code_survey_res.lower() or iteration >= MAX_CODE_SURVEY_ITERATIONS - 1:
+                    break
+                # Add continuation message if not complete
+                messages.append({"role": "assistant", "content": code_survey_res[:2000]})  # Truncate response to 2000 chars
+                messages.append({"role": "user", "content": "Continue reviewing and ensure all academic concepts are covered."})
+            
+            code_survey_res = code_survey_messages[-1]["content"] if code_survey_messages else "Code survey completed."
         # print(code_survey_res)
         
         context_variables["model_survey"] = code_survey_res
@@ -443,11 +485,19 @@ Remember:
 - Project MUST run end-to-end without placeholders
 - MUST complete 2 epochs of training and testing
 """
-        messages = [{"role": "user", "content": ml_dev_query}]
-        ml_dev_messages, context_variables = await self.ml_agent(messages, context_variables)
-        ml_dev_res = ml_dev_messages[-1]["content"]
+        # Skip ML agent execution if skip_ml flag is set (saves significant tokens)
+        if skip_ml:
+            print("[INFO] Skipping ML agent execution to save tokens")
+            ml_dev_res = "ML agent execution skipped. Research completed with idea generation and planning only."
+            judge_res = "ML implementation skipped per configuration."
+            submit_res = "ML experiments skipped per configuration."
+            refine_res = "ML refinement skipped per configuration."
+        else:
+            messages = [{"role": "user", "content": ml_dev_query}]
+            ml_dev_messages, context_variables = await self.ml_agent(messages, context_variables)
+            ml_dev_res = ml_dev_messages[-1]["content"]
 
-        query = f"""\
+            query = f"""\
 INPUT:
 You are given an innovative idea:
 {survey_res}
@@ -468,16 +518,20 @@ Your task is to evaluate the implementation, and give a suggestion about the imp
 2. The implementation should have the test process. All in all, you should train ONE dataset with TWO epochs, and finally test the model on the test dataset within one script. The test metrics should follow the plan.
 3. The model should be train on GPU device. If you meet Out of Memory problem, you should try another specific GPU device.
 """
-        input_messages = [{
-            "role": "user",
-            "content": query
-        }]
-        judge_messages, context_variables = await self.judge_agent(input_messages, context_variables)
-        judge_res = judge_messages[-1]["content"]
+            input_messages = [{
+                "role": "user",
+                "content": query
+            }]
+            judge_messages, context_variables = await self.judge_agent(input_messages, context_variables)
+            judge_res = judge_messages[-1]["content"]
 
-        MAX_ITER_TIMES = max_iter_times
-        for i in range(MAX_ITER_TIMES):
-            query = f"""\
+            # CRITICAL: Drastically reduce iterations (default to 0, max 1)
+            MAX_ITER_TIMES = min(max_iter_times, 1) if max_iter_times > 0 else 0  # Cap at 1 iteration max
+            MAX_ITER_TIMES = int(os.getenv("MAX_ITER_TIMES", str(MAX_ITER_TIMES)))  # Allow env override
+            MAX_ITER_TIMES = min(MAX_ITER_TIMES, 1)  # Hard cap at 1 to prevent token explosion
+            
+            for i in range(MAX_ITER_TIMES):
+                query = f"""\
 You are given an innovative idea:
 {survey_res}
 and the reference codebases chosen by the `Prepare Agent`:
@@ -507,32 +561,41 @@ Remember:
 - MUST use actual dataset (no toy data)
 - MUST complete 2 epochs of training and testing
 """
-            judge_messages.append({"role": "user", "content": query})
-            judge_messages, context_variables = await self.ml_agent(judge_messages, context_variables, iter_times=i+1)
-            ml_dev_res = judge_messages[-1]["content"]
-            query = f"""\
+                # CRITICAL: Trim judge_messages before each call to prevent token explosion
+                judge_messages = trim_message_history(judge_messages, max_len=MAX_MESSAGE_HISTORY)
+                judge_messages.append({"role": "user", "content": query})
+                judge_messages, context_variables = await self.ml_agent(judge_messages, context_variables, iter_times=i+1)
+                ml_dev_res = judge_messages[-1]["content"][:3000]  # Truncate to 3000 chars to save tokens
+                
+                # Truncate long strings to save tokens
+                survey_res_short = survey_res[:1000] if len(survey_res) > 1000 else survey_res
+                prepare_res_short = prepare_res[:1000] if len(prepare_res) > 1000 else prepare_res
+                plan_res_short = plan_res[:1000] if len(plan_res) > 1000 else plan_res
+                ml_dev_res_short = ml_dev_res[:2000] if len(ml_dev_res) > 2000 else ml_dev_res
+                
+                query = f"""\
 You are given an innovative idea:
-{survey_res}
+{survey_res_short}
 and the reference codebases chosen by the `Prepare Agent`:
-{prepare_res}
+{prepare_res_short}
 and the detailed coding plan:
-{plan_res}
+{plan_res_short}
 The implementation of the project:
-{ml_dev_res}
+{ml_dev_res_short}
 Please evaluate the implementation, and give a suggestion about the implementation.
 """
-            judge_messages.append({"role": "user", "content": query})
-            judge_messages, context_variables = await self.judge_agent(judge_messages, context_variables, iter_times=i+1)
-            judge_res = judge_messages[-1]["content"]
-            if '"fully_correct": true' in judge_messages[-1]["content"]:
-                break   
-
-        # return judge_messages[-1]["content"]
-        # submit the code to the environment -> get the result
-
-
-        
-        ml_submit_query = f"""\
+                # CRITICAL: Trim again before judge agent call
+                judge_messages = trim_message_history(judge_messages, max_len=MAX_MESSAGE_HISTORY)
+                judge_messages.append({"role": "user", "content": query})
+                judge_messages, context_variables = await self.judge_agent(judge_messages, context_variables, iter_times=i+1)
+                judge_res = judge_messages[-1]["content"][:2000]  # Truncate response
+                if '"fully_correct": true' in judge_messages[-1]["content"]:
+                    break
+            
+            # return judge_messages[-1]["content"]
+            # submit the code to the environment -> get the result
+            
+            ml_submit_query = f"""\
 You are given an innovative idea:
 {survey_res}
 And your last implementation of the project:
@@ -547,13 +610,17 @@ Your task is to submit the code to the environment by running the script `run_tr
 Note that if your last implementation is not runable, you should finalize the submission with `case_not_resolved` function. But you can temporarily ignore the judgement of the `Judge Agent` which contains the suggestions about the implementation.
 After you get the result, you should return the result with your analysis and suggestions about the implementation with `case_resolved` function.
 """
-        judge_messages.append({"role": "user", "content": ml_submit_query})
-        judge_messages, context_variables = await self.ml_agent(judge_messages, context_variables, iter_times="submit")
-        submit_res = judge_messages[-1]["content"]
+            # CRITICAL: Trim before submit call
+            judge_messages = trim_message_history(judge_messages, max_len=MAX_MESSAGE_HISTORY)
+            judge_messages.append({"role": "user", "content": ml_submit_query})
+            judge_messages, context_variables = await self.ml_agent(judge_messages, context_variables, iter_times="submit")
+            submit_res = judge_messages[-1]["content"][:3000]  # Truncate to save tokens
 
-        EXP_ITER_TIMES = 2
-        for i in range(EXP_ITER_TIMES):
-            exp_planner_query = f"""\
+            # CRITICAL: Reduce experiment iterations to 0 by default (was 1-2)
+            EXP_ITER_TIMES = int(os.getenv("EXP_ITER_TIMES", "0")) if not skip_ml else 0  # Default to 0
+            EXP_ITER_TIMES = min(EXP_ITER_TIMES, 1)  # Hard cap at 1
+            for i in range(EXP_ITER_TIMES):
+                exp_planner_query = f"""\
 You are given an innovative idea:
 {survey_res}
 And the reference codebases chosen by the `Prepare Agent`:
@@ -571,33 +638,44 @@ Your task is to:
     - ANY other experiments that exsiting concurrent reference papers and codebases have done.
 DO NOT use the `case_resolved` function before you have carefully and comprehensively analyzed the experimental results and the reference codebases and papers.
 """
-            judge_messages.append({"role": "user", "content": exp_planner_query})
-            judge_messages, context_variables = await self.exp_analyser(judge_messages, context_variables, iter_times=f"refine_{i+1}")
-            analysis_report = judge_messages[-1]["content"]
+                # CRITICAL: Trim before exp_analyser call
+                judge_messages = trim_message_history(judge_messages, max_len=MAX_MESSAGE_HISTORY)
+                judge_messages.append({"role": "user", "content": exp_planner_query})
+                judge_messages, context_variables = await self.exp_analyser(judge_messages, context_variables, iter_times=f"refine_{i+1}")
+                analysis_report = judge_messages[-1]["content"][:2000]  # Truncate to save tokens
 
-            analysis_report = context_variables["experiment_report"][-1]["analysis_report"]
-            further_plan = context_variables["experiment_report"][-1]["further_plan"]
-            # print(analysis_report)
-            refine_query = f"""\
+                analysis_report = context_variables.get("experiment_report", [{}])[-1].get("analysis_report", analysis_report)[:2000]
+                further_plan = context_variables.get("experiment_report", [{}])[-1].get("further_plan", {})
+                # print(analysis_report)
+                # Truncate long strings to save tokens
+                survey_res_short = survey_res[:1000] if len(survey_res) > 1000 else survey_res
+                prepare_res_short = prepare_res[:1000] if len(prepare_res) > 1000 else prepare_res
+                plan_res_short = plan_res[:1000] if len(plan_res) > 1000 else plan_res
+                submit_res_short = submit_res[:2000] if len(submit_res) > 2000 else submit_res
+                analysis_report_short = analysis_report[:2000] if len(analysis_report) > 2000 else analysis_report
+                
+                refine_query = f"""\
 You are given an innovative idea:
-{survey_res}
+{survey_res_short}
 And the reference codebases chosen by the `Prepare Agent`:
-{prepare_res}
+{prepare_res_short}
 And the detailed coding plan:
-{plan_res}
+{plan_res_short}
 You have conducted the experiments and get the experimental results:
-{submit_res}
+{submit_res_short}
 And a detailed analysis report about the results are given by the `Experiment Planner Agent`:
-{analysis_report}
+{analysis_report_short}
 Your task is to refine the experimental results according to the analysis report by modifying existing code in the directory `/{workplace_name}/project`. You should NOT stop util every experiment is done with ACTUAL results. If you encounter Out of Memory problem, you should try another specific GPU device. If you encounter ANY other problems, you should try your best to solve the problem by yourself.
 
 Note that you should fully utilize the existing code in the directory `/{workplace_name}/project` as much as possible. If you want to add more experiments, you should add the python script in the directory `/{workplace_name}/project/`, like `run_training_testing.py`. Select and output the important results during the experiments into the log files, do NOT output them all in the terminal.
 """
-            judge_messages.append({"role": "user", "content": refine_query})
-            judge_messages, context_variables = await self.ml_agent(judge_messages, context_variables, iter_times=f"refine_{i+1}")
-            refine_res = judge_messages[-1]["content"]
+                # CRITICAL: Trim again before ml_agent call
+                judge_messages = trim_message_history(judge_messages, max_len=MAX_MESSAGE_HISTORY)
+                judge_messages.append({"role": "user", "content": refine_query})
+                judge_messages, context_variables = await self.ml_agent(judge_messages, context_variables, iter_times=f"refine_{i+1}")
+                refine_res = judge_messages[-1]["content"][:3000]  # Truncate to save tokens
 
-        print(refine_res)
+        print(refine_res if not skip_ml and 'refine_res' in locals() else "ML agent execution was skipped")
         
         # Return the final refined result along with key intermediate results
         final_result = {
@@ -670,8 +748,42 @@ def main(args, references, mode="Idea Spark", custom_task=None):
     
     flow = InnoFlow(cache_path="cache_" + instance_id + "_" + COMPLETION_MODEL.replace("/", "__"), log_path=log_path, code_env=code_env, web_env=web_env, file_env=file_env, model=args.model)
     # ml_result = await flow(instance_path=instance_path)
+    
+    # DEFAULT: Paper writing only mode (skip code unless explicitly requested)
+    # Users must set ENABLE_CODE_IMPLEMENTATION=true or use --enable-code flag to get code search, code survey, and ML implementation
+    # Safely check for enable_code attribute (may not exist when called from main_ai_researcher.py)
+    enable_code_flag = False
+    if hasattr(args, 'enable_code'):
+        enable_code_flag = args.enable_code
+    else:
+        # Attribute doesn't exist, default to False (paper writing only)
+        enable_code_flag = False
+    
+    enable_code_env = os.getenv("ENABLE_CODE_IMPLEMENTATION", "false").lower() in ("true", "1", "yes")
+    enable_code = enable_code_flag or enable_code_env
+    paper_writing_only = not enable_code  # Default to paper writing only
+    
+    if paper_writing_only:
+        print("[INFO] Paper Writing Only mode (DEFAULT): Skipping all code-related steps")
+        print("[INFO]   - GitHub code search: SKIPPED")
+        print("[INFO]   - Codebase preparation: SKIPPED")
+        print("[INFO]   - Code survey: SKIPPED")
+        print("[INFO]   - ML implementation: SKIPPED")
+        print("[INFO]   To enable code implementation, set: ENABLE_CODE_IMPLEMENTATION=true")
+        skip_ml = True  # Skip ML when in paper writing mode
+    else:
+        print("[INFO] Code Implementation mode: All code-related steps will run")
+        print("[INFO]   - GitHub code search: ENABLED")
+        print("[INFO]   - Codebase preparation: ENABLED")
+        print("[INFO]   - Code survey: ENABLED")
+        print("[INFO]   - ML implementation: ENABLED")
+        # Check if user also wants to skip ML specifically
+        skip_ml = args.skip_ml or os.getenv("SKIP_ML_AGENT", "false").lower() in ("true", "1", "yes")
+        if skip_ml:
+            print("[INFO]   Note: ML agent is explicitly disabled via SKIP_ML_AGENT")
+    
     try:
-        result = asyncio.run(flow(instance_path=args.instance_path, task_level=args.task_level, local_root=local_root, workplace_name=args.workplace_name, max_iter_times=args.max_iter_times, category=args.category, references=references, mode=mode, custom_task=custom_task))
+        result = asyncio.run(flow(instance_path=args.instance_path, task_level=args.task_level, local_root=local_root, workplace_name=args.workplace_name, max_iter_times=args.max_iter_times, category=args.category, references=references, mode=mode, custom_task=custom_task, skip_ml=skip_ml, paper_writing_only=paper_writing_only))
         print(f"[DEBUG] run_infer_idea.main: asyncio.run returned: {type(result)}, value: {result if result else 'None'}")
         if result is None:
             print("[WARNING] run_infer_idea.main: asyncio.run returned None")

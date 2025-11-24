@@ -41,6 +41,7 @@ def get_args_research(argv=None):
     parser.add_argument("--port", type=int, default=12345)
     parser.add_argument("--max_iter_times", type=int, default=0)
     parser.add_argument("--category", type=str, default="recommendation")
+    parser.add_argument("--enable-code", action="store_true", dest="enable_code", help="Enable code implementation (default: paper writing only)")
     # Check if we're being called from uvicorn/FastAPI (common indicators)
     if argv is not None:
         # Explicit argv provided (e.g., from API with empty list)
