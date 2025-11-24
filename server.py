@@ -690,4 +690,20 @@ def del_env(key: str) -> Dict[str, Any]:
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run("server:app", host="0.0.0.0", port=8080, reload=False)
+    # Exclude runtime-generated files from reload detection to prevent server restarts during job execution
+    reload_excludes = [
+        "**/cookies_data.py",
+        "**/logs/**",
+        "**/cache/**",
+        "**/workplace/**",
+        "**/casestudy_results/**",
+        "**/paper_agent/**/cache_*/**",
+        "**/*.log",
+    ]
+    uvicorn.run(
+        "server:app", 
+        host="0.0.0.0", 
+        port=8080, 
+        reload=False,  # Set to True for development, but exclude problematic files
+        reload_excludes=reload_excludes if os.getenv("ENABLE_RELOAD", "false").lower() == "true" else []
+    )
