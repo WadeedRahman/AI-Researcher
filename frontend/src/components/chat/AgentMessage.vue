@@ -20,6 +20,16 @@
               <span class="loading-subtitle">This may take a few moments</span>
             </div>
           </div>
+          <!-- Overall Progress Indicator -->
+          <div v-if="overallProgress > 0" class="overall-progress-container">
+            <div class="overall-progress-header">
+              <span class="overall-progress-label">Overall Progress</span>
+              <span class="overall-progress-percentage">{{ overallProgress }}%</span>
+            </div>
+            <div class="overall-progress-bar">
+              <div class="overall-progress-fill" :style="{ width: overallProgress + '%' }"></div>
+            </div>
+          </div>
           <div v-if="progress && progress.length > 0" class="progress-container">
             <div class="progress-card" v-for="(item, index) in progress" :key="index">
               <div class="progress-icon">
@@ -88,6 +98,36 @@ function getProgressPercentage(item: string): number {
   }
   return 0
 }
+
+// Calculate overall progress percentage from all progress items
+const overallProgress = computed(() => {
+  if (!props.progress || props.progress.length === 0) {
+    return 0
+  }
+  
+  // Find the subtasks progress item
+  const subtasksItem = props.progress.find(item => item.includes('subtasks'))
+  if (subtasksItem) {
+    return getProgressPercentage(subtasksItem)
+  }
+  
+  // If no subtasks but we have progress info, estimate based on current agent
+  // This gives at least some indication of progress
+  const currentAgentItem = props.progress.find(item => item.includes('Current Agent'))
+  if (currentAgentItem) {
+    // Estimate progress based on which agent is running
+    // This is a rough estimate: each agent represents ~15-20% progress
+    const agentNames = ['Prepare Agent', 'Survey Agent', 'Plan Agent', 'ML Agent', 'Judge Agent', 'Exp Analyser']
+    const currentAgent = formatProgressLabel(currentAgentItem)
+    const agentIndex = agentNames.findIndex(name => currentAgent.includes(name))
+    if (agentIndex >= 0) {
+      // Base progress: (agent_index + 1) * 15%, capped at 90% until completion
+      return Math.min((agentIndex + 1) * 15, 90)
+    }
+  }
+  
+  return 0
+})
 
 // Simple markdown formatter (basic support for headers, bold, italic, code blocks, lists)
 function formatMarkdown(text: string): string {
@@ -386,6 +426,66 @@ function formatMarkdown(text: string): string {
 .loading-subtitle {
   font-size: 0.875rem;
   color: var(--color-text-secondary);
+}
+
+.overall-progress-container {
+  margin-top: var(--spacing-lg);
+  padding: var(--spacing-lg);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  border-left: 4px solid var(--color-primary);
+}
+
+.overall-progress-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: var(--spacing-md);
+}
+
+.overall-progress-label {
+  font-size: 0.9375rem;
+  font-weight: 600;
+  color: var(--color-text);
+}
+
+.overall-progress-percentage {
+  font-size: 1.25rem;
+  font-weight: 700;
+  color: var(--color-primary);
+  font-variant-numeric: tabular-nums;
+}
+
+.overall-progress-bar {
+  width: 100%;
+  height: 12px;
+  background: var(--color-surface-elevated);
+  border-radius: 6px;
+  overflow: hidden;
+  position: relative;
+  box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.1);
+}
+
+.overall-progress-fill {
+  height: 100%;
+  background: linear-gradient(90deg, var(--color-primary) 0%, var(--color-secondary) 100%);
+  border-radius: 6px;
+  transition: width 0.6s cubic-bezier(0.4, 0, 0.2, 1);
+  position: relative;
+  overflow: hidden;
+  box-shadow: 0 2px 8px rgba(99, 102, 241, 0.3);
+}
+
+.overall-progress-fill::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.4), transparent);
+  animation: shimmer 1.5s infinite;
 }
 
 .progress-container {

@@ -460,7 +460,14 @@ async function pollJobStatus(jobId: string, messageIndex: number) {
           if (total > 0) {
             progress.push(`Progress: ${completed}/${total} subtasks completed`)
           }
+        } else if (job.status === 'running' || job.status === 'pending') {
+          // Show initial progress even if subtasks aren't available yet
+          progress.push(`Progress: 0/6 subtasks completed`)
         }
+      } else if (job.status === 'running' || job.status === 'pending') {
+        // Show initial progress when job starts but progress data isn't available yet
+        progress.push(`Current Agent: Initializing...`)
+        progress.push(`Progress: 0/6 subtasks completed`)
       }
 
       // Fetch logs
