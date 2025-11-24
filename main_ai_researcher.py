@@ -3,6 +3,8 @@ import argparse
 import os
 import sys
 import asyncio
+import contextlib
+import threading
 import global_state
 from dotenv import load_dotenv
 
@@ -11,6 +13,16 @@ from dotenv import load_dotenv
 
 def init_ai_researcher():
     a = 1
+
+@contextlib.contextmanager
+def change_directory(path):
+    """Thread-safe context manager for changing directories."""
+    original_dir = os.getcwd()
+    try:
+        os.chdir(path)
+        yield
+    finally:
+        os.chdir(original_dir)
 
 def get_args_research(argv=None): 
     """
@@ -92,14 +104,13 @@ def main_ai_researcher(input, reference, mode):
             # - If no reference file: use idea generation agent (run_infer_idea)
             # - If reference file attached: use reference-based agent (run_infer_plan)
             # Note: Removed INIT_FLAG check - each API request should be independent
-            # Save original directory to restore later
-            original_dir = os.getcwd()
+            # Use thread-safe directory change context manager
             result = None
-            try:
-                current_file_path = os.path.realpath(__file__)
-                current_dir = os.path.dirname(current_file_path)
-                sub_dir = os.path.join(current_dir, "research_agent")
-                os.chdir(sub_dir)
+            current_file_path = os.path.realpath(__file__)
+            current_dir = os.path.dirname(current_file_path)
+            sub_dir = os.path.join(current_dir, "research_agent")
+            
+            with change_directory(sub_dir):
 
                 from research_agent.constant import COMPLETION_MODEL
                 from research_agent import run_infer_idea, run_infer_plan
@@ -187,9 +198,6 @@ def main_ai_researcher(input, reference, mode):
                         import traceback
                         traceback.print_exc()
                         result = f"Error in research process: {str(e)}"
-            finally:
-                # Always restore original directory
-                os.chdir(original_dir)
             
             # Ensure we always return a result
             if result is None:
@@ -199,13 +207,12 @@ def main_ai_researcher(input, reference, mode):
         case 'Detailed Idea Description':
             # Note: INIT_FLAG check removed - JobManager handles concurrency
             # Each job runs independently through the job queue
-            original_dir = os.getcwd()
             result = None
-            try:
-                current_file_path = os.path.realpath(__file__)
-                current_dir = os.path.dirname(current_file_path)
-                sub_dir = os.path.join(current_dir, "research_agent")
-                os.chdir(sub_dir)
+            current_file_path = os.path.realpath(__file__)
+            current_dir = os.path.dirname(current_file_path)
+            sub_dir = os.path.join(current_dir, "research_agent")
+            
+            with change_directory(sub_dir):
 
                 from research_agent.constant import COMPLETION_MODEL
                 from research_agent import run_infer_idea, run_infer_plan
@@ -240,8 +247,6 @@ def main_ai_researcher(input, reference, mode):
 """
                 else:
                     result = f"Research completed successfully using Detailed Idea Description mode. Results have been generated and saved."
-            finally:
-                os.chdir(original_dir)
             
             if result is None:
                 result = f"Research process completed but no results were returned. Please check the logs for more information."
@@ -250,13 +255,12 @@ def main_ai_researcher(input, reference, mode):
         case 'Reference-Based Ideation':
             # Note: INIT_FLAG check removed - JobManager handles concurrency
             # Each job runs independently through the job queue
-            original_dir = os.getcwd()
             result = None
-            try:
-                current_file_path = os.path.realpath(__file__)
-                current_dir = os.path.dirname(current_file_path)
-                sub_dir = os.path.join(current_dir, "research_agent")
-                os.chdir(sub_dir)
+            current_file_path = os.path.realpath(__file__)
+            current_dir = os.path.dirname(current_file_path)
+            sub_dir = os.path.join(current_dir, "research_agent")
+            
+            with change_directory(sub_dir):
 
                 from research_agent.constant import COMPLETION_MODEL
                 from research_agent import run_infer_idea, run_infer_plan
@@ -311,8 +315,6 @@ def main_ai_researcher(input, reference, mode):
                     result = "\n".join(result_parts) if len(result_parts) > 1 else f"Research completed successfully using Reference-Based Ideation mode. Results have been generated and saved."
                 else:
                     result = f"Research completed successfully using Reference-Based Ideation mode. Results have been generated and saved."
-            finally:
-                os.chdir(original_dir)
             
             if result is None:
                 result = f"Research process completed but no results were returned. Please check the logs for more information."

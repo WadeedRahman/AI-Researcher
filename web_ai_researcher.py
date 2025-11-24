@@ -518,6 +518,11 @@ def validate_input(question: str) -> bool:
 def run_ai_researcher(question: str, reference: str, example_module: str) -> Tuple[str, str, str]:
     global CURRENT_PROCESS
 
+    # Standardize reference to empty string if None or empty
+    if reference is None:
+        reference = ""
+    reference = reference.strip()
+
     # 验证输入
     if not validate_input(question):
         logging.warning("User submitted invalid input")
@@ -565,12 +570,17 @@ def run_ai_researcher(question: str, reference: str, example_module: str) -> Tup
                 f"❌ Error: Run failed - {str(e)}",
             )
 
-        token_info = None
-        if not isinstance(token_info, dict):
-            token_info = {}
+        # Try to get token usage from global state if available
+        token_info = {}
+        try:
+            import global_state
+            if hasattr(global_state, 'TOKEN_USAGE') and isinstance(global_state.TOKEN_USAGE, dict):
+                token_info = global_state.TOKEN_USAGE
+        except Exception:
+            pass
 
-        completion_tokens = token_info.get("completion_token_count", 0)
-        prompt_tokens = token_info.get("prompt_token_count", 0)
+        completion_tokens = token_info.get("completion_token_count", token_info.get("completion_tokens", 0))
+        prompt_tokens = token_info.get("prompt_token_count", token_info.get("prompt_tokens", 0))
         total_tokens = completion_tokens + prompt_tokens
 
         logging.info(

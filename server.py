@@ -45,6 +45,7 @@ app.add_middleware(
         "http://localhost:3000",  # Alternative dev port
         "http://127.0.0.1:5173",
         "http://127.0.0.1:3000",
+        "https://novix.videmak.net"
         # Add production frontend URL here when deploying
         # "https://your-frontend-domain.com",
     ],

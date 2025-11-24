@@ -304,12 +304,14 @@ class MetaChain:
                 debug=debug,
             )
             message: Message = completion.choices[0].message
-            message.sender = active_agent.name
+            # Convert to dict first, then add sender to avoid Pydantic serialization issues
+            message_dict = json.loads(message.model_dump_json())
+            message_dict['sender'] = active_agent.name
             # debug_print(debug, "Received completion:", message.model_dump_json(indent=4), log_path=log_path, title="Received Completion", color="blue")
-            self.logger.pretty_print_messages(message)
-            history.append(
-                json.loads(message.model_dump_json())
-            )  # to avoid OpenAI types (?)
+            # Create a message dict for logging
+            log_message = {**message_dict}
+            self.logger.pretty_print_messages(log_message)
+            history.append(message_dict)  # to avoid OpenAI types (?)
 
             if not message.tool_calls or not execute_tools:
                 self.logger.info("Ending turn.", title="End Turn", color="red")
@@ -515,12 +517,14 @@ class MetaChain:
                 history.append({"role": "error", "content": f"Error: {e}"})
                 break
             message: Message = completion_response.choices[0].message
-            message.sender = active_agent.name
+            # Convert to dict first, then add sender to avoid Pydantic serialization issues
+            message_dict = json.loads(message.model_dump_json())
+            message_dict['sender'] = active_agent.name
             # debug_print(debug, "Received completion:", message.model_dump_json(indent=4), log_path=log_path, title="Received Completion", color="blue")
-            self.logger.pretty_print_messages(message)
-            history.append(
-                json.loads(message.model_dump_json())
-            )  # to avoid OpenAI types (?)
+            # Create a message dict for logging
+            log_message = {**message_dict}
+            self.logger.pretty_print_messages(log_message)
+            history.append(message_dict)  # to avoid OpenAI types (?)
 
             if enter_agent.tool_choice != "required":
                 if (not message.tool_calls and active_agent.name == enter_agent.name) or not execute_tools:

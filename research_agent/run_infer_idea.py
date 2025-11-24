@@ -249,8 +249,15 @@ Note that the math formula should be as complete as possible.{mode_instructions}
             IDEA_NUM = 7  # More comprehensive, more ideas for thorough research
         else:  # Auto Experiment or default
             IDEA_NUM = 5  # Balanced approach
+        
+        # Limit message history to prevent context window overflow
+        MAX_MESSAGE_HISTORY = 20  # Keep last 20 messages to avoid context overflow
         for i in range(IDEA_NUM - 1):
             messages.extend(survey_messages)
+            # Trim message history if it gets too long
+            if len(messages) > MAX_MESSAGE_HISTORY:
+                # Keep first message (system/initial) and last MAX_MESSAGE_HISTORY-1 messages
+                messages = [messages[0]] + messages[-(MAX_MESSAGE_HISTORY-1):]
             messages.append({"role": "user", "content": "please survey again and give me another idea"})
             survey_messages, context_variables = await self.idea_agent(messages, context_variables, iter_times=i+1)
             survey_res = survey_messages[-1]["content"]
@@ -274,13 +281,26 @@ I have carefully gone through these papers' github repositories and found downlo
 And I have also downloaded the corresponding paper in the Tex format, with the following information:
 {download_res}
 
-Your task is to carefully understand the innovative idea, and thoroughly review codebases and generate a comprehensive implementation report for the innovative idea. You can NOT stop to review the codebases until you have get all academic concepts in the innovative idea.
+Your task is to carefully understand the innovative idea, and thoroughly review codebases and generate a comprehensive implementation report for the innovative idea. Review the codebases systematically and identify all academic concepts in the innovative idea.
 
 Note that the code implementation should be as complete as possible.
+You have a maximum of 10 iterations to complete this task. If you cannot find all concepts after thorough review, document what you found and proceed.
 """
         messages = [{"role": "user", "content": code_survey_query}]
-        code_survey_messages, context_variables = await self.code_survey_agent(messages, context_variables)
-        code_survey_res = code_survey_messages[-1]["content"]
+        # Add iteration limit to prevent infinite loops
+        MAX_CODE_SURVEY_ITERATIONS = 10
+        code_survey_messages = None
+        for iteration in range(MAX_CODE_SURVEY_ITERATIONS):
+            code_survey_messages, context_variables = await self.code_survey_agent(messages, context_variables)
+            code_survey_res = code_survey_messages[-1]["content"]
+            # Check if agent indicates completion
+            if "completed" in code_survey_res.lower() or "finished" in code_survey_res.lower() or iteration >= MAX_CODE_SURVEY_ITERATIONS - 1:
+                break
+            # Add continuation message if not complete
+            messages.append({"role": "assistant", "content": code_survey_res})
+            messages.append({"role": "user", "content": "Continue reviewing and ensure all academic concepts are covered."})
+        
+        code_survey_res = code_survey_messages[-1]["content"] if code_survey_messages else "Code survey completed."
         # print(code_survey_res)
         
         context_variables["model_survey"] = code_survey_res

@@ -420,8 +420,23 @@ Please evaluate the implementation, and give a suggestion about the implementati
             judge_messages.append({"role": "user", "content": query})
             judge_messages, context_variables = await self.judge_agent(judge_messages, context_variables, iter_times=i+1)
             judge_res = judge_messages[-1]["content"]
-            if '"fully_correct": true' in judge_messages[-1]["content"]:
-                break   
+            # Use JSON parsing instead of fragile string matching
+            try:
+                import json
+                import re
+                # Try to extract JSON from the response
+                json_match = re.search(r'\{[^{}]*"fully_correct"[^{}]*\}', judge_res, re.DOTALL)
+                if json_match:
+                    judge_json = json.loads(json_match.group())
+                    if judge_json.get("fully_correct") is True:
+                        break
+                # Fallback: check for the string pattern (backward compatibility)
+                elif '"fully_correct": true' in judge_res or '"fully_correct":true' in judge_res:
+                    break
+            except (json.JSONDecodeError, AttributeError):
+                # If JSON parsing fails, fall back to string matching
+                if '"fully_correct": true' in judge_res or '"fully_correct":true' in judge_res:
+                    break   
 
         # return judge_messages[-1]["content"]
         # submit the code to the environment -> get the result

@@ -160,15 +160,17 @@ class JobManager:
                         job.status = JobStatus.SUCCEEDED
                         
                         # Automatically trigger Paper Generation Agent after research jobs complete
-                        mode = job.payload.get("mode", "")
-                        research_modes = [
-                            "Detailed Idea Description", 
-                            "Reference-Based Ideation",
-                            "Idea Spark",
-                            "Deep Survey",
-                            "Auto Experiment"
-                        ]
-                        if mode in research_modes:
+                        # Only submit if job actually succeeded (not failed or cancelled)
+                        if job.status == JobStatus.SUCCEEDED:
+                            mode = job.payload.get("mode", "")
+                            research_modes = [
+                                "Detailed Idea Description", 
+                                "Reference-Based Ideation",
+                                "Idea Spark",
+                                "Deep Survey",
+                                "Auto Experiment"
+                            ]
+                            if mode in research_modes:
                             # Submit paper generation job automatically (in a separate thread to avoid blocking)
                             import threading
                             def submit_paper_job():
