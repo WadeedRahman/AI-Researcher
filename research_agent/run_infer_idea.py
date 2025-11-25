@@ -826,7 +826,9 @@ def main(args, references, mode="Idea Spark", custom_task=None):
         print("[INFO]   - Code survey: ENABLED")
         print("[INFO]   - ML implementation: ENABLED")
         # Check if user also wants to skip ML specifically
-        skip_ml = args.skip_ml or os.getenv("SKIP_ML_AGENT", "false").lower() in ("true", "1", "yes")
+        # Safely check for skip_ml attribute (may not exist when called from main_ai_researcher.py)
+        skip_ml_flag = getattr(args, 'skip_ml', False)
+        skip_ml = skip_ml_flag or os.getenv("SKIP_ML_AGENT", "false").lower() in ("true", "1", "yes")
         if skip_ml:
             print("[INFO]   Note: ML agent is explicitly disabled via SKIP_ML_AGENT")
     
