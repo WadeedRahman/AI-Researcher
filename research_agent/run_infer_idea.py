@@ -299,17 +299,8 @@ Your task is to analyze multiple existing ideas, select the most novel one, enha
         # Skip code survey if paper_writing_only mode (not needed for article writing)
         if paper_writing_only:
             print("[INFO] Paper Writing Only mode: Skipping code survey")
-            code_survey_res = """Code Survey Report (Paper Writing Mode - Conceptual Only):
-
-This is a conceptual implementation report for paper writing purposes. The actual code implementation has been skipped.
-
-Key Academic Concepts Identified:
-- The proposed method addresses the challenges outlined in the idea
-- Implementation would follow standard practices in the field
-- Technical approach aligns with the innovative idea
-
-Note: This is a placeholder for paper writing. For actual implementation, set ENABLE_CODE_IMPLEMENTATION=true.
-"""
+            # Don't create placeholder text - just skip it entirely
+            code_survey_res = "N/A"  # Will be filtered out in formatting
         else:
             code_survey_query = f"""\
 I have an innovative idea related to machine learning:

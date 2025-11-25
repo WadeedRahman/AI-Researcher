@@ -136,17 +136,18 @@ def main_ai_researcher(input, reference, mode):
                         print(f"[DEBUG] main_ai_researcher: run_infer_plan returned: {type(research_result)}")
                         # Format the result for display
                         if research_result and isinstance(research_result, dict):
-                            result = f"""# Research Results (Mode: {mode})
-
-## Final Result
-{research_result.get('final_result', 'N/A')}
-
-## Survey Results
-{research_result.get('survey_result', 'N/A')}
-
-## Implementation Plan
-{research_result.get('plan', 'N/A')}
-"""
+                            # Natural conversational response - no headers
+                            parts = []
+                            final = research_result.get('final_result', 'N/A')
+                            survey = research_result.get('survey_result', 'N/A')
+                            plan = research_result.get('plan', 'N/A')
+                            if final and final != 'N/A':
+                                parts.append(final)
+                            if survey and survey != 'N/A':
+                                parts.append(survey)
+                            if plan and plan != 'N/A':
+                                parts.append(plan)
+                            result = "\n\n".join(parts) if parts else "Research completed successfully."
                         else:
                             result = f"Research completed successfully using reference-based agent (mode: {mode}). Results have been generated and saved. Returned type: {type(research_result)}"
                     except Exception as e:
@@ -176,87 +177,144 @@ def main_ai_researcher(input, reference, mode):
                             code_survey = research_result.get('code_survey', 'N/A')
                             plan = research_result.get('plan', 'N/A')
                             
-                            # Build result string with better formatting and filtering
-                            result_parts = [f"# Research Results (Mode: {mode})"]
-                            
-                            # Helper function to clean text (NO TRUNCATION - show full content)
+                            # Build natural conversational response (NO markdown headers, NO placeholders)
+                            # Helper function to clean text and remove all unwanted content
                             def clean_text(text):
                                 if not text or text == 'N/A':
                                     return None
-                                # Remove any ML/code skip messages - not relevant for research-only mode
+                                
+                                # Remove ALL placeholder and skip messages
                                 skip_patterns = [
                                     "skipped per configuration",
                                     "ML refinement skipped",
                                     "ML agent execution skipped",
                                     "ML implementation skipped",
-                                    "ML experiments skipped"
+                                    "ML experiments skipped",
+                                    "Code Survey Report (Paper Writing Mode - Conceptual Only):",
+                                    "This is a conceptual implementation report for paper writing purposes.",
+                                    "The actual code implementation has been skipped.",
+                                    "This is a placeholder for paper writing.",
+                                    "Note: This is a placeholder for paper writing.",
+                                    "For actual implementation, set ENABLECODEIMPLEMENTATION=true",
+                                    "Key Academic Concepts Identified:",
+                                    "The proposed method addresses the challenges outlined in the idea",
+                                    "Implementation would follow standard practices in the field",
+                                    "Technical approach aligns with the innovative idea",
+                                    "Research completed successfully.",
+                                    "The following research components have been generated:",
+                                    "Research idea and concept analysis",
+                                    "Literature survey and review",
+                                    "Implementation plan (conceptual)",
+                                    "This is a research-only mode focused on idea generation and analysis.",
+                                    "Code implementation is not included."
                                 ]
-                                if any(pattern in text.lower() for pattern in skip_patterns):
+                                
+                                text_lower = text.lower()
+                                # Check if text is mostly placeholder content
+                                skip_count = sum(1 for pattern in skip_patterns if pattern.lower() in text_lower)
+                                if skip_count >= 2:  # If 2+ skip patterns found, it's likely a placeholder
                                     return None
-                                # Return full text - no truncation
-                                return text
+                                
+                                # Remove markdown headers
+                                lines = text.split('\n')
+                                cleaned_lines = []
+                                for line in lines:
+                                    # Skip lines that are just headers or placeholders
+                                    line_lower = line.lower().strip()
+                                    if any(pattern.lower() in line_lower for pattern in skip_patterns):
+                                        continue
+                                    # Skip markdown headers
+                                    if line.strip().startswith('#') or line.strip().startswith('##') or line.strip().startswith('###'):
+                                        continue
+                                    # Skip section dividers
+                                    if line.strip() in ['Selected Idea', 'Final Result', 'Code Survey', 'Implementation Plan']:
+                                        continue
+                                    cleaned_lines.append(line)
+                                
+                                cleaned = '\n'.join(cleaned_lines).strip()
+                                
+                                # If cleaned text is too short or mostly empty, skip it
+                                if len(cleaned) < 50:
+                                    return None
+                                
+                                return cleaned if cleaned else None
                             
-                            # Helper to remove duplicate headers in code survey
+                            # Helper to completely remove code survey placeholders
                             def clean_code_survey(text):
                                 if not text:
                                     return None
-                                # Remove duplicate "Code Survey Report" headers
-                                if text.count("Code Survey Report") > 1:
-                                    parts = text.split("Code Survey Report")
-                                    # Keep only the last occurrence
-                                    return "Code Survey Report" + parts[-1] if len(parts) > 1 else text
+                                # If it's the placeholder, return None
+                                if "Code Survey Report (Paper Writing Mode" in text or "conceptual implementation report" in text.lower():
+                                    return None
                                 return text
                             
-                            # Helper to format plan (handle dict/JSON)
+                            # Helper to format plan as natural text (no JSON dumps)
                             def format_plan(plan_text):
                                 if not plan_text or plan_text == 'N/A':
                                     return None
-                                # Try to parse as JSON and format nicely
+                                
+                                # If it's a string that looks like JSON, try to parse it
                                 if isinstance(plan_text, str) and plan_text.strip().startswith('{'):
                                     try:
                                         plan_dict = json.loads(plan_text)
-                                        formatted = []
+                                        # Format as readable text, not JSON
+                                        formatted_parts = []
                                         for key, value in plan_dict.items():
                                             key_display = key.replace('_', ' ').title()
                                             if isinstance(value, dict):
-                                                formatted.append(f"\n### {key_display}\n")
+                                                formatted_parts.append(f"{key_display}:")
                                                 for sub_key, sub_value in value.items():
                                                     sub_key_display = sub_key.replace('_', ' ').title()
-                                                    formatted.append(f"**{sub_key_display}**: {sub_value}\n")
+                                                    formatted_parts.append(f"  • {sub_key_display}: {sub_value}")
                                             elif isinstance(value, list):
-                                                formatted.append(f"\n### {key_display}\n")
+                                                formatted_parts.append(f"{key_display}:")
                                                 for item in value:
-                                                    formatted.append(f"- {item}\n")
+                                                    formatted_parts.append(f"  • {item}")
                                             else:
-                                                formatted.append(f"**{key_display}**: {value}\n")
-                                        return "".join(formatted)
+                                                formatted_parts.append(f"{key_display}: {value}")
+                                        return "\n".join(formatted_parts)
                                     except:
-                                        pass  # Keep as-is if not valid JSON
+                                        # If JSON parsing fails, return as-is but cleaned
+                                        return plan_text
+                                
                                 return plan_text
                             
+                            # Build natural conversational response - ONLY show the actual research content
+                            response_parts = []
+                            
+                            # Get the main research idea (this is the core content)
                             if selected_idea and selected_idea != 'N/A':
                                 cleaned = clean_text(selected_idea)
                                 if cleaned:
-                                    result_parts.append(f"\n## Selected Idea\n{cleaned}")
+                                    response_parts.append(cleaned)
                             
+                            # Skip final_result if it's just a generic completion message
+                            # Only add it if it has actual content
                             if final_result and final_result != 'N/A':
                                 cleaned = clean_text(final_result)
-                                if cleaned:
-                                    result_parts.append(f"\n## Final Result\n{cleaned}")
+                                if cleaned and "Research completed successfully" not in cleaned:
+                                    response_parts.append(cleaned)
                             
+                            # Skip code survey entirely if it's a placeholder
+                            # Only add if it has real content
                             if code_survey and code_survey != 'N/A':
                                 cleaned_survey = clean_code_survey(code_survey)
                                 cleaned = clean_text(cleaned_survey) if cleaned_survey else None
                                 if cleaned:
-                                    result_parts.append(f"\n## Code Survey\n{cleaned}")
+                                    response_parts.append(cleaned)
                             
+                            # Add implementation plan if it has real content
                             if plan and plan != 'N/A':
                                 formatted_plan = format_plan(plan)
                                 cleaned = clean_text(formatted_plan) if formatted_plan else None
                                 if cleaned:
-                                    result_parts.append(f"\n## Implementation Plan\n{cleaned}")
+                                    response_parts.append(cleaned)
                             
-                            result = "\n".join(result_parts) if len(result_parts) > 1 else f"Research completed successfully using idea generation agent (mode: {mode}). Results have been generated and saved."
+                            # Join all parts with natural spacing - NO headers, NO structure
+                            if response_parts:
+                                result = "\n\n".join(response_parts)
+                            else:
+                                result = "I've completed the research analysis based on your query."
                         else:
                             # If it's not a dict, convert to string
                             result = str(research_result) if research_result else f"Research completed successfully using idea generation agent (mode: {mode}). Results have been generated and saved."
@@ -301,17 +359,18 @@ def main_ai_researcher(input, reference, mode):
                 
                 # Format the result for display
                 if research_result and isinstance(research_result, dict):
-                    result = f"""# Research Results (Mode: Detailed Idea Description)
-
-## Final Result
-{research_result.get('final_result', 'N/A')}
-
-## Survey Results
-{research_result.get('survey_result', 'N/A')}
-
-## Implementation Plan
-{research_result.get('plan', 'N/A')}
-"""
+                    # Natural conversational response - no headers
+                    parts = []
+                    final = research_result.get('final_result', 'N/A')
+                    survey = research_result.get('survey_result', 'N/A')
+                    plan = research_result.get('plan', 'N/A')
+                    if final and final != 'N/A':
+                        parts.append(final)
+                    if survey and survey != 'N/A':
+                        parts.append(survey)
+                    if plan and plan != 'N/A':
+                        parts.append(plan)
+                    result = "\n\n".join(parts) if parts else "Research completed successfully."
                 else:
                     result = f"Research completed successfully using Detailed Idea Description mode. Results have been generated and saved."
             
@@ -365,21 +424,47 @@ def main_ai_researcher(input, reference, mode):
                     plan = research_result.get('plan', 'N/A')
                     
                     # Build result string
-                    result_parts = [f"# Research Results (Mode: Reference-Based Ideation)"]
+                    # Natural conversational response - no headers
+                    response_parts = []
+                    
+                    # Simple cleaning function
+                    def clean_text_simple(text):
+                        if not text or text == 'N/A':
+                            return None
+                        skip_patterns = [
+                            "skipped per configuration", "ML refinement skipped",
+                            "Code Survey Report (Paper Writing Mode", "conceptual implementation report",
+                            "This is a placeholder", "Research completed successfully."
+                        ]
+                        text_lower = text.lower()
+                        if any(pattern.lower() in text_lower for pattern in skip_patterns):
+                            return None
+                        # Remove markdown headers
+                        text = text.replace("# ", "").replace("## ", "").replace("### ", "")
+                        return text.strip() if text.strip() else None
                     
                     if selected_idea and selected_idea != 'N/A':
-                        result_parts.append(f"\n## Selected Idea\n{selected_idea}")
+                        cleaned = clean_text_simple(selected_idea)
+                        if cleaned:
+                            response_parts.append(cleaned)
                     
                     if final_result and final_result != 'N/A':
-                        result_parts.append(f"\n## Final Refined Result\n{final_result}")
+                        cleaned = clean_text_simple(final_result)
+                        if cleaned:
+                            response_parts.append(cleaned)
                     
                     if code_survey and code_survey != 'N/A':
-                        result_parts.append(f"\n## Code Survey\n{code_survey}")
+                        if "Code Survey Report (Paper Writing Mode" not in code_survey:
+                            cleaned = clean_text_simple(code_survey)
+                            if cleaned:
+                                response_parts.append(cleaned)
                     
                     if plan and plan != 'N/A':
-                        result_parts.append(f"\n## Implementation Plan\n{plan}")
+                        cleaned = clean_text_simple(plan)
+                        if cleaned:
+                            response_parts.append(cleaned)
                     
-                    result = "\n".join(result_parts) if len(result_parts) > 1 else f"Research completed successfully using Reference-Based Ideation mode. Results have been generated and saved."
+                    result = "\n\n".join(response_parts) if response_parts else "Research completed successfully."
                 else:
                     result = f"Research completed successfully using Reference-Based Ideation mode. Results have been generated and saved."
             
