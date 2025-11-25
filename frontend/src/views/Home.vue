@@ -454,20 +454,15 @@ async function pollJobStatus(jobId: string, messageIndex: number) {
         if (currentJob.progress.current_step) {
           progress.push(`Step: ${currentJob.progress.current_step}`)
         }
+        // Don't show step details - just track progress internally
         if (currentJob.progress.subtasks && currentJob.progress.subtasks.length > 0) {
           const completed = currentJob.progress.subtasks.filter((s: any) => s.status === 'completed').length
           const total = currentJob.progress.subtasks.length
           if (total > 0) {
+            // Store progress internally but don't show to user
             progress.push(`Progress: ${completed}/${total} subtasks completed`)
           }
-        } else if (job.status === 'running' || job.status === 'pending') {
-          // Show initial progress even if subtasks aren't available yet
-          progress.push(`Progress: 0/6 subtasks completed`)
         }
-      } else if (job.status === 'running' || job.status === 'pending') {
-        // Show initial progress when job starts but progress data isn't available yet
-        progress.push(`Current Agent: Initializing...`)
-        progress.push(`Progress: 0/6 subtasks completed`)
       }
 
       // Fetch logs

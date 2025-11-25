@@ -20,38 +20,10 @@
               <span class="loading-subtitle">This may take a few moments</span>
             </div>
           </div>
-          <!-- Overall Progress Indicator -->
-          <div v-if="overallProgress > 0" class="overall-progress-container">
-            <div class="overall-progress-header">
-              <span class="overall-progress-label">Overall Progress</span>
-              <span class="overall-progress-percentage">{{ overallProgress }}%</span>
-            </div>
-            <div class="overall-progress-bar">
-              <div class="overall-progress-fill" :style="{ width: overallProgress + '%' }"></div>
-            </div>
-          </div>
-          <div v-if="progress && progress.length > 0" class="progress-container">
-            <div class="progress-card" v-for="(item, index) in progress" :key="index">
-              <div class="progress-icon">
-                <svg v-if="item.includes('Current Agent')" width="16" height="16" viewBox="0 0 16 16" fill="none">
-                  <path d="M8 0L10.5 5.5L16 8L10.5 10.5L8 16L5.5 10.5L0 8L5.5 5.5L8 0Z" fill="currentColor"/>
-                </svg>
-                <svg v-else-if="item.includes('Step')" width="16" height="16" viewBox="0 0 16 16" fill="none">
-                  <path d="M2 2L14 2L14 4L2 4L2 2ZM2 6L14 6L14 8L2 8L2 6ZM2 10L14 10L14 12L2 12L2 10ZM2 14L10 14L10 16L2 16L2 14Z" fill="currentColor"/>
-                </svg>
-                <svg v-else width="16" height="16" viewBox="0 0 16 16" fill="none">
-                  <path d="M8 0C3.58 0 0 3.58 0 8C0 12.42 3.58 16 8 16C12.42 16 16 12.42 16 8C16 3.58 12.42 0 8 0ZM6.5 12L2.5 8L3.91 6.59L6.5 9.17L12.09 3.58L13.5 5L6.5 12Z" fill="currentColor"/>
-                </svg>
-              </div>
-              <div class="progress-info">
-                <span class="progress-label">{{ formatProgressLabel(item) }}</span>
-                <div v-if="item.includes('subtasks')" class="progress-bar-container">
-                  <div class="progress-bar">
-                    <div class="progress-bar-fill" :style="{ width: getProgressPercentage(item) + '%' }"></div>
-                  </div>
-                  <span class="progress-percentage">{{ getProgressPercentage(item) }}%</span>
-                </div>
-              </div>
+          <!-- Simple progress bar only - no details -->
+          <div v-if="isLoading" class="simple-progress-container">
+            <div class="simple-progress-bar">
+              <div class="simple-progress-fill" :style="{ width: overallProgress + '%' }"></div>
             </div>
           </div>
         </div>
@@ -61,12 +33,7 @@
             <span class="cursor">▋</span>
           </div>
           <div v-else class="markdown-content" v-html="formatMarkdown(message)"></div>
-          <div v-if="progress && progress.length > 0" class="progress-container-inline">
-            <div class="progress-badge" v-for="(item, index) in progress" :key="index">
-              <span class="progress-badge-icon">●</span>
-              <span>{{ formatProgressLabel(item) }}</span>
-            </div>
-          </div>
+          <!-- No progress details shown - just the progress bar above -->
         </div>
       </div>
     </div>
@@ -99,7 +66,7 @@ function getProgressPercentage(item: string): number {
   return 0
 }
 
-// Calculate overall progress percentage from all progress items
+// Calculate overall progress percentage - simple estimation
 const overallProgress = computed(() => {
   if (!props.progress || props.progress.length === 0) {
     return 0
@@ -111,19 +78,26 @@ const overallProgress = computed(() => {
     return getProgressPercentage(subtasksItem)
   }
   
-  // If no subtasks but we have progress info, estimate based on current agent
-  // This gives at least some indication of progress
+  // Simple estimation based on current agent - no details shown to user
   const currentAgentItem = props.progress.find(item => item.includes('Current Agent'))
   if (currentAgentItem) {
-    // Estimate progress based on which agent is running
-    // This is a rough estimate: each agent represents ~15-20% progress
-    const agentNames = ['Prepare Agent', 'Survey Agent', 'Plan Agent', 'ML Agent', 'Judge Agent', 'Exp Analyser']
+    // Just estimate progress - user doesn't see details
+    const paperWritingAgents = ['Idea Agent', 'Plan Agent']
+    const fullModeAgents = ['Prepare Agent', 'Idea Agent', 'Code Survey Agent', 'Plan Agent', 'ML Agent', 'Judge Agent', 'Exp Analyser']
     const currentAgent = formatProgressLabel(currentAgentItem)
-    const agentIndex = agentNames.findIndex(name => currentAgent.includes(name))
+    
+    const agentIndex = paperWritingAgents.findIndex(name => currentAgent.includes(name))
     if (agentIndex >= 0) {
-      // Base progress: (agent_index + 1) * 15%, capped at 90% until completion
-      return Math.min((agentIndex + 1) * 15, 90)
+      return Math.min((agentIndex + 1) * 33, 90)
     }
+    
+    const fullAgentIndex = fullModeAgents.findIndex(name => currentAgent.includes(name))
+    if (fullAgentIndex >= 0) {
+      return Math.min((fullAgentIndex + 1) * 14, 90)
+    }
+    
+    // If agent is running but not in list, show some progress
+    return 30
   }
   
   return 0
@@ -696,6 +670,40 @@ function formatMarkdown(text: string): string {
   100% {
     transform: translateX(100%);
   }
+}
+
+.simple-progress-container {
+  margin-top: var(--spacing-lg);
+  padding: 0;
+}
+
+.simple-progress-bar {
+  width: 100%;
+  height: 8px;
+  background: var(--color-surface-elevated);
+  border-radius: 4px;
+  overflow: hidden;
+  position: relative;
+}
+
+.simple-progress-fill {
+  height: 100%;
+  background: linear-gradient(90deg, var(--color-primary) 0%, var(--color-secondary) 100%);
+  border-radius: 4px;
+  transition: width 0.6s cubic-bezier(0.4, 0, 0.2, 1);
+  position: relative;
+  overflow: hidden;
+}
+
+.simple-progress-fill::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.4), transparent);
+  animation: shimmer 1.5s infinite;
 }
 
 @media (max-width: 768px) {
