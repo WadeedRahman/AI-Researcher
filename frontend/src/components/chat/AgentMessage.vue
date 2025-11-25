@@ -208,6 +208,8 @@ function formatMarkdown(text: string): string {
   align-items: flex-start;
   gap: var(--spacing-md);
   max-width: 75%;
+  width: 100%;
+  box-sizing: border-box;
 }
 
 @media (min-width: 1920px) {
@@ -248,6 +250,9 @@ function formatMarkdown(text: string): string {
 .message-body {
   flex: 1;
   min-width: 0;
+  max-width: 100%;
+  overflow-wrap: break-word;
+  word-wrap: break-word;
 }
 
 .message-text {
@@ -257,6 +262,13 @@ function formatMarkdown(text: string): string {
   padding: var(--spacing-lg) var(--spacing-xl);
   box-shadow: var(--shadow-lg);
   border-left: 4px solid var(--color-primary);
+  width: 100%;
+  max-width: 100%;
+  overflow-wrap: break-word;
+  word-wrap: break-word;
+  word-break: break-word;
+  overflow-x: hidden;
+  box-sizing: border-box;
 }
 
 .message-text p {
@@ -264,6 +276,9 @@ function formatMarkdown(text: string): string {
   color: var(--color-text);
   line-height: 1.6;
   word-wrap: break-word;
+  overflow-wrap: break-word;
+  word-break: break-word;
+  max-width: 100%;
 }
 
 .message-text p:last-child {
@@ -273,6 +288,13 @@ function formatMarkdown(text: string): string {
 .markdown-content {
   color: var(--color-text);
   line-height: 1.6;
+  width: 100%;
+  max-width: 100%;
+  overflow-wrap: break-word;
+  word-wrap: break-word;
+  word-break: break-word;
+  overflow-x: hidden;
+  box-sizing: border-box;
 }
 
 .markdown-content h1 {
@@ -316,7 +338,12 @@ function formatMarkdown(text: string): string {
   border-radius: var(--radius);
   padding: var(--spacing-md);
   overflow-x: auto;
+  overflow-y: auto;
+  max-width: 100%;
   margin: 1em 0;
+  word-wrap: break-word;
+  word-break: break-word;
+  white-space: pre-wrap;
 }
 
 .markdown-content pre code {
@@ -330,11 +357,33 @@ function formatMarkdown(text: string): string {
 .markdown-content ol {
   margin: 0.5em 0;
   padding-left: 1.5em;
+  max-width: 100%;
+  overflow-wrap: break-word;
+  word-wrap: break-word;
 }
 
 .markdown-content li {
   margin: 0.3em 0;
   color: var(--color-text);
+  overflow-wrap: break-word;
+  word-wrap: break-word;
+  word-break: break-word;
+}
+
+.markdown-content table {
+  width: 100%;
+  max-width: 100%;
+  border-collapse: collapse;
+  overflow-x: auto;
+  display: block;
+  word-wrap: break-word;
+}
+
+.markdown-content table td,
+.markdown-content table th {
+  word-wrap: break-word;
+  overflow-wrap: break-word;
+  max-width: 100%;
 }
 
 .markdown-content strong {

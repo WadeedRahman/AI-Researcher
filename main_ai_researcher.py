@@ -7,6 +7,7 @@ import contextlib
 import threading
 import global_state
 from dotenv import load_dotenv
+import json
 
 
 
@@ -175,20 +176,85 @@ def main_ai_researcher(input, reference, mode):
                             code_survey = research_result.get('code_survey', 'N/A')
                             plan = research_result.get('plan', 'N/A')
                             
-                            # Build result string
+                            # Build result string with better formatting and filtering
                             result_parts = [f"# Research Results (Mode: {mode})"]
                             
+                            # Helper function to clean text (NO TRUNCATION - show full content)
+                            def clean_text(text):
+                                if not text or text == 'N/A':
+                                    return None
+                                # Remove any ML/code skip messages - not relevant for research-only mode
+                                skip_patterns = [
+                                    "skipped per configuration",
+                                    "ML refinement skipped",
+                                    "ML agent execution skipped",
+                                    "ML implementation skipped",
+                                    "ML experiments skipped"
+                                ]
+                                if any(pattern in text.lower() for pattern in skip_patterns):
+                                    return None
+                                # Return full text - no truncation
+                                return text
+                            
+                            # Helper to remove duplicate headers in code survey
+                            def clean_code_survey(text):
+                                if not text:
+                                    return None
+                                # Remove duplicate "Code Survey Report" headers
+                                if text.count("Code Survey Report") > 1:
+                                    parts = text.split("Code Survey Report")
+                                    # Keep only the last occurrence
+                                    return "Code Survey Report" + parts[-1] if len(parts) > 1 else text
+                                return text
+                            
+                            # Helper to format plan (handle dict/JSON)
+                            def format_plan(plan_text):
+                                if not plan_text or plan_text == 'N/A':
+                                    return None
+                                # Try to parse as JSON and format nicely
+                                if isinstance(plan_text, str) and plan_text.strip().startswith('{'):
+                                    try:
+                                        plan_dict = json.loads(plan_text)
+                                        formatted = []
+                                        for key, value in plan_dict.items():
+                                            key_display = key.replace('_', ' ').title()
+                                            if isinstance(value, dict):
+                                                formatted.append(f"\n### {key_display}\n")
+                                                for sub_key, sub_value in value.items():
+                                                    sub_key_display = sub_key.replace('_', ' ').title()
+                                                    formatted.append(f"**{sub_key_display}**: {sub_value}\n")
+                                            elif isinstance(value, list):
+                                                formatted.append(f"\n### {key_display}\n")
+                                                for item in value:
+                                                    formatted.append(f"- {item}\n")
+                                            else:
+                                                formatted.append(f"**{key_display}**: {value}\n")
+                                        return "".join(formatted)
+                                    except:
+                                        pass  # Keep as-is if not valid JSON
+                                return plan_text
+                            
                             if selected_idea and selected_idea != 'N/A':
-                                result_parts.append(f"\n## Selected Idea\n{selected_idea}")
+                                cleaned = clean_text(selected_idea)
+                                if cleaned:
+                                    result_parts.append(f"\n## Selected Idea\n{cleaned}")
                             
                             if final_result and final_result != 'N/A':
-                                result_parts.append(f"\n## Final Refined Result\n{final_result}")
+                                cleaned = clean_text(final_result)
+                                if cleaned:
+                                    result_parts.append(f"\n## Final Result\n{cleaned}")
                             
                             if code_survey and code_survey != 'N/A':
-                                result_parts.append(f"\n## Code Survey\n{code_survey}")
+                                cleaned_survey = clean_code_survey(code_survey)
+                                cleaned = clean_text(cleaned_survey) if cleaned_survey else None
+                                if cleaned:
+                                    result_parts.append(f"\n## Code Survey\n{cleaned}")
                             
                             if plan and plan != 'N/A':
-                                result_parts.append(f"\n## Implementation Plan\n{plan}")
+                                formatted_plan = format_plan(plan)
+                                cleaned = clean_text(formatted_plan) if formatted_plan else None
+                                if cleaned:
+                                    result_parts.append(f"\n## Implementation Plan\n{cleaned}")
                             
                             result = "\n".join(result_parts) if len(result_parts) > 1 else f"Research completed successfully using idea generation agent (mode: {mode}). Results have been generated and saved."
                         else:

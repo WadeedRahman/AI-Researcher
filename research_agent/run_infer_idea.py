@@ -299,9 +299,7 @@ Your task is to analyze multiple existing ideas, select the most novel one, enha
         # Skip code survey if paper_writing_only mode (not needed for article writing)
         if paper_writing_only:
             print("[INFO] Paper Writing Only mode: Skipping code survey")
-            code_survey_res = f"""Code Survey Report (Paper Writing Mode - Conceptual Only):
-
-Based on the innovative idea: {survey_res[:500]}
+            code_survey_res = """Code Survey Report (Paper Writing Mode - Conceptual Only):
 
 This is a conceptual implementation report for paper writing purposes. The actual code implementation has been skipped.
 
@@ -310,7 +308,7 @@ Key Academic Concepts Identified:
 - Implementation would follow standard practices in the field
 - Technical approach aligns with the innovative idea
 
-Note: This is a placeholder for paper writing. For actual implementation, run without paper_writing_only mode.
+Note: This is a placeholder for paper writing. For actual implementation, set ENABLE_CODE_IMPLEMENTATION=true.
 """
         else:
             code_survey_query = f"""\
@@ -486,12 +484,11 @@ Remember:
 - MUST complete 2 epochs of training and testing
 """
         # Skip ML agent execution if skip_ml flag is set (saves significant tokens)
-        if skip_ml:
-            print("[INFO] Skipping ML agent execution to save tokens")
-            ml_dev_res = "ML agent execution skipped. Research completed with idea generation and planning only."
-            judge_res = "ML implementation skipped per configuration."
-            submit_res = "ML experiments skipped per configuration."
-            refine_res = "ML refinement skipped per configuration."
+        # In paper writing mode, we don't need ML implementation at all
+        if skip_ml or paper_writing_only:
+            print("[INFO] Skipping ML agent execution (paper writing mode - research only)")
+            # Don't set any ML-related variables - they're not needed
+            refine_res = None  # Will be set properly in final_result logic
         else:
             messages = [{"role": "user", "content": ml_dev_query}]
             ml_dev_messages, context_variables = await self.ml_agent(messages, context_variables)
@@ -675,14 +672,35 @@ Note that you should fully utilize the existing code in the directory `/{workpla
                 judge_messages, context_variables = await self.ml_agent(judge_messages, context_variables, iter_times=f"refine_{i+1}")
                 refine_res = judge_messages[-1]["content"][:3000]  # Truncate to save tokens
 
-        print(refine_res if not skip_ml and 'refine_res' in locals() else "ML agent execution was skipped")
+        # Determine final result message - clean summary without ML references
+        if skip_ml or paper_writing_only:
+            # In paper writing mode, we only do research - no ML/code needed
+            final_result_text = """Research completed successfully.
+
+The following research components have been generated:
+- Research idea and concept analysis
+- Literature survey and review  
+- Implementation plan (conceptual)
+
+This is a research-only mode focused on idea generation and analysis. Code implementation is not included."""
+        else:
+            # Only show refine_res if ML was actually executed
+            final_result_text = refine_res if 'refine_res' in locals() and refine_res and refine_res is not None else "Research completed successfully."
+        
+        # Ensure plan_res is a string (it might be a dict)
+        plan_text = plan_res
+        if isinstance(plan_res, dict):
+            import json
+            plan_text = json.dumps(plan_res, indent=2)
+        elif not isinstance(plan_res, str):
+            plan_text = str(plan_res) if plan_res else "N/A"
         
         # Return the final refined result along with key intermediate results
         final_result = {
-            "final_result": refine_res if 'refine_res' in locals() else "Research completed",
+            "final_result": final_result_text,
             "selected_idea": survey_res if 'survey_res' in locals() else "N/A",
             "code_survey": code_survey_res if 'code_survey_res' in locals() else "N/A",
-            "plan": plan_res if 'plan_res' in locals() else "N/A",
+            "plan": plan_text,
             "context_notes": context_variables.get("notes", [])
         }
         print(f"[DEBUG] Returning result from forward: {type(final_result)}")

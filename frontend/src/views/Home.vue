@@ -678,12 +678,15 @@ async function pollJobStatus(jobId: string, messageIndex: number) {
 .chat-messages {
   flex: 1;
   overflow-y: auto;
+  overflow-x: hidden;
   padding: var(--spacing-xl) 0;
   display: flex;
   flex-direction: column;
   gap: var(--spacing-lg);
   scroll-behavior: smooth;
   max-width: 100%;
+  width: 100%;
+  box-sizing: border-box;
 }
 
 .chat-messages::-webkit-scrollbar {
