@@ -755,7 +755,22 @@ def main(args, references, mode="Idea Spark", custom_task=None):
     # Ensure log directory exists
     os.makedirs(os.path.dirname(log_path) if os.path.dirname(log_path) else ".", exist_ok=True)
     
-    flow = InnoFlow(cache_path="cache_" + instance_id + "_" + COMPLETION_MODEL.replace("/", "__"), log_path=log_path, code_env=code_env, web_env=web_env, file_env=file_env, model=args.model)
+    # CRITICAL FIX: Use unique cache path based on job_id or custom_task to prevent cache collisions
+    # If custom_task is provided, create unique cache based on task hash
+    # Otherwise, use instance_id (for benchmark tasks)
+    import hashlib
+    if custom_task:
+        # Create unique cache path based on custom task to prevent cache reuse across different queries
+        task_hash = hashlib.md5(custom_task.encode()).hexdigest()[:12]
+        unique_cache_id = f"{instance_id}_{task_hash}"
+        print(f"[DEBUG] Using unique cache path for custom task: {unique_cache_id}")
+    else:
+        # For benchmark tasks, use instance_id
+        unique_cache_id = instance_id
+        print(f"[DEBUG] Using benchmark cache path: {unique_cache_id}")
+    
+    cache_path = "cache_" + unique_cache_id + "_" + COMPLETION_MODEL.replace("/", "__")
+    flow = InnoFlow(cache_path=cache_path, log_path=log_path, code_env=code_env, web_env=web_env, file_env=file_env, model=args.model)
     # ml_result = await flow(instance_path=instance_path)
     
     # DEFAULT: Paper writing only mode (skip code unless explicitly requested)
