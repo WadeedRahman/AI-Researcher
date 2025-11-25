@@ -212,7 +212,12 @@ def main_ai_researcher(input, reference, mode):
                                     "As a large language model",
                                     "I don't have access to past conversations",
                                     "Please share the innovative idea",
-                                    "Once you provide the details"
+                                    "Once you provide the details",
+                                    "I am sorry, but I was unable to find any papers",
+                                    "unable to find any papers in the",
+                                    "Please provide the papers you would like me to analyze",
+                                    "workplace/papers/ directory",
+                                    "However, I need you to provide"
                                 ]
                                 
                                 text_lower = text.lower()
@@ -360,7 +365,11 @@ def main_ai_researcher(input, reference, mode):
                                     "I need you to provide",
                                     "As a large language model",
                                     "Please share the innovative idea",
-                                    "Once you provide the details"
+                                    "Once you provide the details",
+                                    "I am sorry, but I was unable to find any papers",
+                                    "unable to find any papers in the",
+                                    "Please provide the papers you would like me to analyze",
+                                    "workplace/papers/ directory"
                                 ]
                                 
                                 lines = text.split('\n')
@@ -571,7 +580,11 @@ def main_ai_researcher(input, reference, mode):
                         skip_patterns = [
                             "skipped per configuration", "ML refinement skipped",
                             "Code Survey Report (Paper Writing Mode", "conceptual implementation report",
-                            "This is a placeholder", "Research completed successfully."
+                            "This is a placeholder", "Research completed successfully.",
+                            "I am sorry, but I was unable to find any papers",
+                            "unable to find any papers in the",
+                            "Please provide the papers you would like me to analyze",
+                            "workplace/papers/ directory"
                         ]
                         text_lower = text.lower()
                         if any(pattern.lower() in text_lower for pattern in skip_patterns):

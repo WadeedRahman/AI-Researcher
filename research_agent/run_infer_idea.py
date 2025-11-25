@@ -802,7 +802,14 @@ def main(args, references, mode="Idea Spark", custom_task=None):
     
     enable_code_env = os.getenv("ENABLE_CODE_IMPLEMENTATION", "false").lower() in ("true", "1", "yes")
     enable_code = enable_code_flag or enable_code_env
-    paper_writing_only = not enable_code  # Default to paper writing only
+    
+    # Deep Survey mode should always enable code implementation (no skipping)
+    if mode == "Deep Survey":
+        enable_code = True
+        paper_writing_only = False
+        print("[INFO] Deep Survey mode: Code implementation ENABLED (all steps will run)")
+    else:
+        paper_writing_only = not enable_code  # Default to paper writing only for other modes
     
     if paper_writing_only:
         print("[INFO] Paper Writing Only mode (DEFAULT): Skipping all code-related steps")
