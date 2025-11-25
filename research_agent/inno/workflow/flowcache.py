@@ -12,7 +12,7 @@ class AgentModule:
         self.agent = agent
         self.client = client
         self.cache_path = cache_path
-    async def __call__(self, messages: List[Dict], context_variables: Dict, iter_times: int = None, *args, **kwargs):
+    async def __call__(self, messages: List[Dict], context_variables: Dict, iter_times: int = None, max_turns: int = None, *args, **kwargs):
         # messages = [{"role": "user", "content": query}]
         agent_cache, escape_running = self.check_cache(self.agent.name, iter_times)
         if agent_cache and escape_running:
@@ -21,7 +21,7 @@ class AgentModule:
         elif agent_cache and not escape_running:
             messages.extend(agent_cache["messages"])
             context_variables.update(agent_cache["context_variables"])
-            response = await self.client.run_async(self.agent, messages, context_variables=context_variables, debug=True)
+            response = await self.client.run_async(self.agent, messages, context_variables=context_variables, debug=True, max_turns=max_turns if max_turns else float("inf"))
             ret_messages = response.messages
             ret_context_variables = response.context_variables
             if ret_messages[-1]["role"] != "error":
@@ -32,7 +32,7 @@ class AgentModule:
             if ret_messages[-1]["role"] == "error":
                 raise Exception(ret_messages[-1]["content"])
         else:
-            response = await self.client.run_async(self.agent, messages, context_variables=context_variables, debug=True)
+            response = await self.client.run_async(self.agent, messages, context_variables=context_variables, debug=True, max_turns=max_turns if max_turns else float("inf"))
             ret_messages = response.messages
             ret_context_variables = response.context_variables
             if ret_messages[-1]["role"] != "error":

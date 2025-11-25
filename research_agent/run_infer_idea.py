@@ -237,7 +237,21 @@ Your task is to search for and choose at least 5 repositories as the reference c
         else:
             reference_section = "Please use your knowledge and search capabilities to find relevant information and papers for this task."
         
-        idea_query = f"""\
+        # Build query based on mode - don't mention papers/downloads if skipped
+        if paper_writing_only:
+            # Paper writing mode - no code/papers, just idea generation
+            idea_query = f"""\
+I have a task related to research:
+{final_task}
+{reference_section}
+
+Your task is to generate innovative research ideas for the given task. Use your knowledge and understanding of the field to propose novel approaches.
+
+Note that the math formula should be as complete as possible.{mode_instructions}
+"""
+        else:
+            # Full mode - mention papers and codebases
+            idea_query = f"""\
 I have a task related to machine learning:
 {final_task}
 {reference_section}
@@ -253,21 +267,19 @@ Note that the math formula should be as complete as possible.{mode_instructions}
 """
         messages = [{"role": "user", "content": idea_query}]
         context_variables["notes"] = []
-        survey_messages, context_variables = await self.idea_agent(messages, context_variables)
-        survey_res = survey_messages[-1]["content"]
-        ideas = [survey_res]
-        # CRITICAL: Reduce idea generation to save tokens (was 3-7, now 1-2)
-        # Environment variable can override: IDEA_NUM (default: 1 for minimal token usage)
-        IDEA_NUM = int(os.getenv("IDEA_NUM", "1"))  # Default to 1 idea only
+        
+        # Generate exactly 1 idea for Idea Spark (minimum tokens)
+        # Environment variable can override: IDEA_NUM (default: 1)
+        IDEA_NUM = int(os.getenv("IDEA_NUM", "1"))  # Default to 1 idea
         if mode == "Idea Spark":
-            IDEA_NUM = min(IDEA_NUM, 2)  # Cap at 2 for Idea Spark
+            IDEA_NUM = 1  # Always 1 for Idea Spark to minimize tokens
         elif mode == "Deep Survey":
-            IDEA_NUM = min(IDEA_NUM, 3)  # Cap at 3 for Deep Survey
+            IDEA_NUM = min(IDEA_NUM, 2)  # Cap at 2 for Deep Survey
         else:  # Auto Experiment or default
-            IDEA_NUM = min(IDEA_NUM, 2)  # Cap at 2 for others
+            IDEA_NUM = min(IDEA_NUM, 1)  # Cap at 1 for others
         
         # CRITICAL: Aggressive message history trimming to prevent token explosion
-        MAX_MESSAGE_HISTORY = int(os.getenv("MAX_MESSAGE_HISTORY", "5"))  # Reduced from 20 to 5
+        MAX_MESSAGE_HISTORY = int(os.getenv("MAX_MESSAGE_HISTORY", "2"))  # Reduced to 2 for minimal token usage
         
         def trim_message_history(msgs, max_len=MAX_MESSAGE_HISTORY):
             """Trim message history to prevent token explosion"""
@@ -275,25 +287,23 @@ Note that the math formula should be as complete as possible.{mode_instructions}
                 return msgs
             # Keep first message (initial prompt) and last max_len-1 messages
             return [msgs[0]] + msgs[-(max_len-1):]
-        for i in range(IDEA_NUM - 1):
-            messages.extend(survey_messages)
-            # Trim message history if it gets too long
-            if len(messages) > MAX_MESSAGE_HISTORY:
-                # Keep first message (system/initial) and last MAX_MESSAGE_HISTORY-1 messages
-                messages = [messages[0]] + messages[-(MAX_MESSAGE_HISTORY-1):]
-            messages.append({"role": "user", "content": "please survey again and give me another idea"})
-            survey_messages, context_variables = await self.idea_agent(messages, context_variables, iter_times=i+1)
-            survey_res = survey_messages[-1]["content"]
-            ideas.append(survey_res)
-        # messages.extend(survey_messages)
-        messages = [{"role": "user", "content": """\
-You have generated {} innovative ideas for the given task:
-{}
-
-Your task is to analyze multiple existing ideas, select the most novel one, enhance the idea if any key information is missing, finally give me the most novel idea with refined math formula and code implementation. Directly output the selected refined idea report.
-""".format(IDEA_NUM, '\n===================\n==================='.join(ideas))}]
-        survey_messages, context_variables = await self.idea_agent(messages, context_variables, iter_times="select")
-        survey_res = survey_messages[-1]["content"]
+        
+        # Generate multiple ideas (2 by default) - each is independent to save tokens
+        ideas = []
+        for i in range(IDEA_NUM):
+            # Use fresh messages for each idea to avoid token buildup
+            # Only keep the original query, not previous idea responses
+            idea_messages = [messages[0]]  # Just the original query
+            if i > 0:
+                # For subsequent ideas, just ask for another idea (no history)
+                idea_messages.append({"role": "user", "content": "Generate another different innovative idea for the same task."})
+            
+            survey_messages, context_variables = await self.idea_agent(idea_messages, context_variables, iter_times=i+1)
+            idea_content = survey_messages[-1]["content"]
+            ideas.append(idea_content)
+        
+        # Use first idea as main result (single response only)
+        survey_res = ideas[0] if ideas else "No ideas generated."
         # print(survey_res)
 
         # Skip code survey if paper_writing_only mode (not needed for article writing)
@@ -336,7 +346,12 @@ You have a maximum of 10 iterations to complete this task. If you cannot find al
         
         context_variables["model_survey"] = code_survey_res
 
-        plan_query = f"""\
+        # Skip plan agent if paper_writing_only mode (no code/papers to plan)
+        if paper_writing_only:
+            print("[INFO] Paper Writing Only mode: Skipping plan agent (no code implementation needed)")
+            plan_res = "N/A"  # Will be filtered out in formatting
+        else:
+            plan_query = f"""\
 I have an innovative ideas related to machine learning:
 {survey_res}
 And a list of papers for your reference:
@@ -353,9 +368,10 @@ We have already selected the following datasets as experimental datasets:
 
 Your task is to carefully review the existing resources and understand the task, and give me a detailed plan for the implementation.
 """
-        messages = [{"role": "user", "content": plan_query}]
-        plan_messages, context_variables = await self.coding_plan_agent(messages, context_variables)
-        plan_res = plan_messages[-1]["content"]
+            messages = [{"role": "user", "content": plan_query}]
+            # Limit plan agent turns to prevent infinite loops (max 5 turns)
+            plan_messages, context_variables = await self.coding_plan_agent(messages, context_variables, max_turns=5)
+            plan_res = plan_messages[-1]["content"]
 
         # write the model based on the model survey notes
         ml_dev_query = f"""\
@@ -678,20 +694,21 @@ This is a research-only mode focused on idea generation and analysis. Code imple
             # Only show refine_res if ML was actually executed
             final_result_text = refine_res if 'refine_res' in locals() and refine_res and refine_res is not None else "Research completed successfully."
         
-        # Ensure plan_res is a string (it might be a dict)
+        # Keep plan_res as dict if it's a dict - don't convert to JSON string
+        # The formatter in main_ai_researcher.py will handle dict formatting
         plan_text = plan_res
-        if isinstance(plan_res, dict):
-            import json
-            plan_text = json.dumps(plan_res, indent=2)
-        elif not isinstance(plan_res, str):
-            plan_text = str(plan_res) if plan_res else "N/A"
+        if not isinstance(plan_res, (dict, str)):
+            plan_text = str(plan_res) if plan_res else None
+        elif plan_res == "N/A" or plan_res is None:
+            plan_text = None
         
         # Return the final refined result along with key intermediate results
+        # Filter out "N/A" values
         final_result = {
             "final_result": final_result_text,
-            "selected_idea": survey_res if 'survey_res' in locals() else "N/A",
-            "code_survey": code_survey_res if 'code_survey_res' in locals() else "N/A",
-            "plan": plan_text,
+            "selected_idea": survey_res if 'survey_res' in locals() and survey_res and survey_res != "N/A" else None,
+            "code_survey": code_survey_res if 'code_survey_res' in locals() and code_survey_res and code_survey_res != "N/A" else None,
+            "plan": plan_text if plan_text and plan_text != "N/A" else None,
             "context_notes": context_variables.get("notes", [])
         }
         print(f"[DEBUG] Returning result from forward: {type(final_result)}")

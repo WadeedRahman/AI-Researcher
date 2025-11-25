@@ -1,11 +1,11 @@
 from research_agent.inno.types import Agent
-from research_agent.inno.tools import gen_code_tree_structure, read_file, plan_dataset, plan_model, plan_training, plan_testing, terminal_page_down, terminal_page_up, terminal_page_to
+from research_agent.inno.tools import gen_code_tree_structure, read_file, plan_dataset, plan_model, plan_training, plan_testing, terminal_page_down, terminal_page_up, terminal_page_to, case_resolved as case_resolved_tool
 from research_agent.inno.util import make_message, make_tool_message
 from research_agent.inno.registry import register_agent
 from research_agent.inno.environment.docker_env import DockerEnv, with_env
 from inspect import signature
 
-def case_resolved(context_variables):
+def merge_plan(context_variables):
    """ 
    The function to merge the plan of the dataset, model, and training process. Use this function only after you have carefully reviewed the existing resources and understand the task, and get the plan of the dataset, model, training and testing process.
    """
@@ -13,16 +13,16 @@ def case_resolved(context_variables):
 I have reviewed the existing resources and understand the task, and here is the plan of the dataset, model, training and testing process:
 
 # Dataset Plan
-{context_variables["dataset_plan"]}
+{context_variables.get("dataset_plan", "N/A")}
 
 # Model Plan
-{context_variables["model_survey"]}
+{context_variables.get("model_survey", "N/A")}
 
 # Training Plan
-{context_variables["training_plan"]}
+{context_variables.get("training_plan", "N/A")}
 
 # Testing Plans
-{context_variables["testing_plan"]}
+{context_variables.get("testing_plan", "N/A")}
 """
    return merged_plan
 
@@ -91,9 +91,15 @@ IMPORTANT REQUIREMENTS:
    - Include specific metrics for evaluation
    - Define success criteria clearly
 
+4. Completion (CRITICAL)
+   - After generating ALL plans (dataset, training, testing), you MUST call `case_resolved` tool
+   - Format the merged plan as: "I have reviewed the existing resources and understand the task, and here is the plan of the dataset, model, training and testing process: [Dataset Plan] [Model Plan] [Training Plan] [Testing Plans]"
+   - Once `case_resolved` is called, STOP - do not call any more planning tools
+   - The `case_resolved` tool will end the agent execution
+
 Your goal is to create a comprehensive, practical, and implementable plan that bridges the innovative idea with actual code implementation.
 """
-    tools = [read_file, plan_dataset, plan_training, plan_testing, gen_code_tree_structure, case_resolved, terminal_page_down, terminal_page_up, terminal_page_to]
+    tools = [read_file, plan_dataset, plan_training, plan_testing, gen_code_tree_structure, case_resolved_tool, terminal_page_down, terminal_page_up, terminal_page_to]
     tools = [with_env(code_env)(tool) if 'env' in signature(tool).parameters else tool for tool in tools]
     return Agent(
     name="Coding Plan Agent",

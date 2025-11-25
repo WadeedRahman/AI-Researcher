@@ -206,7 +206,13 @@ def main_ai_researcher(input, reference, mode):
                                     "Literature survey and review",
                                     "Implementation plan (conceptual)",
                                     "This is a research-only mode focused on idea generation and analysis.",
-                                    "Code implementation is not included."
+                                    "Code implementation is not included.",
+                                    "I am ready to analyze",
+                                    "I need you to provide",
+                                    "As a large language model",
+                                    "I don't have access to past conversations",
+                                    "Please share the innovative idea",
+                                    "Once you provide the details"
                                 ]
                                 
                                 text_lower = text.lower()
@@ -248,71 +254,202 @@ def main_ai_researcher(input, reference, mode):
                                     return None
                                 return text
                             
-                            # Helper to format plan as natural text (no JSON dumps)
+                            # Helper to format plan as natural text (handles dict, JSON string, or text with embedded dicts)
                             def format_plan(plan_text):
                                 if not plan_text or plan_text == 'N/A':
                                     return None
                                 
-                                # If it's a string that looks like JSON, try to parse it
-                                if isinstance(plan_text, str) and plan_text.strip().startswith('{'):
-                                    try:
-                                        plan_dict = json.loads(plan_text)
-                                        # Format as readable text, not JSON
-                                        formatted_parts = []
-                                        for key, value in plan_dict.items():
-                                            key_display = key.replace('_', ' ').title()
-                                            if isinstance(value, dict):
-                                                formatted_parts.append(f"{key_display}:")
-                                                for sub_key, sub_value in value.items():
-                                                    sub_key_display = sub_key.replace('_', ' ').title()
-                                                    formatted_parts.append(f"  • {sub_key_display}: {sub_value}")
-                                            elif isinstance(value, list):
-                                                formatted_parts.append(f"{key_display}:")
-                                                for item in value:
-                                                    formatted_parts.append(f"  • {item}")
-                                            else:
-                                                formatted_parts.append(f"{key_display}: {value}")
-                                        return "\n".join(formatted_parts)
-                                    except:
-                                        # If JSON parsing fails, return as-is but cleaned
-                                        return plan_text
+                                # Handle dict directly
+                                if isinstance(plan_text, dict):
+                                    return format_dict_as_text(plan_text)
                                 
-                                return plan_text
+                                # If it's a string, try to extract and format any dicts/JSON in it
+                                if isinstance(plan_text, str):
+                                    import re
+                                    import ast
+                                    
+                                    # Extract dicts from the text - handle both Python dict literals and JSON
+                                    formatted_parts = []
+                                    
+                                    # Split by common separators to find dict sections
+                                    # Look for patterns like "Dataset Plan\n{...}" or just standalone dicts
+                                    sections = re.split(r'(?:Dataset Plan|Model Plan|Training Plan|Testing Plans?)[:\s]*', plan_text, flags=re.IGNORECASE)
+                                    
+                                    for section in sections:
+                                        section = section.strip()
+                                        if not section:
+                                            continue
+                                        
+                                        # Try to find dict in this section
+                                        # Match dict that might span multiple lines
+                                        dict_match = re.search(r'\{.*\}', section, re.DOTALL)
+                                        if dict_match:
+                                            dict_str = dict_match.group(0)
+                                            try:
+                                                # Try Python dict literal first (single quotes)
+                                                plan_dict = ast.literal_eval(dict_str)
+                                                if isinstance(plan_dict, dict):
+                                                    formatted_parts.append(format_dict_as_text(plan_dict))
+                                                    continue
+                                            except:
+                                                try:
+                                                    # Try JSON (double quotes)
+                                                    plan_dict = json.loads(dict_str)
+                                                    if isinstance(plan_dict, dict):
+                                                        formatted_parts.append(format_dict_as_text(plan_dict))
+                                                        continue
+                                                except:
+                                                    pass
+                                        
+                                        # If no dict found, try to clean the section text
+                                        cleaned_section = clean_plan_text(section)
+                                        if cleaned_section and len(cleaned_section) > 20:
+                                            formatted_parts.append(cleaned_section)
+                                    
+                                    if formatted_parts:
+                                        return "\n\n".join(formatted_parts)
+                                    
+                                    # If no dicts found, try parsing entire string as JSON
+                                    if plan_text.strip().startswith('{'):
+                                        try:
+                                            plan_dict = json.loads(plan_text)
+                                            return format_dict_as_text(plan_dict)
+                                        except:
+                                            pass
+                                    
+                                    # If all else fails, return cleaned text (remove JSON-looking parts)
+                                    return clean_plan_text(plan_text)
+                                
+                                return str(plan_text)
                             
-                            # Build natural conversational response - ONLY show the actual research content
+                            # Helper to format a dict as readable text
+                            def format_dict_as_text(plan_dict):
+                                formatted_parts = []
+                                for key, value in plan_dict.items():
+                                    key_display = key.replace('_', ' ').title()
+                                    if isinstance(value, dict):
+                                        formatted_parts.append(f"\n{key_display}:")
+                                        for sub_key, sub_value in value.items():
+                                            sub_key_display = sub_key.replace('_', ' ').title()
+                                            if isinstance(sub_value, dict):
+                                                formatted_parts.append(f"  {sub_key_display}:")
+                                                for sub_sub_key, sub_sub_value in sub_value.items():
+                                                    sub_sub_key_display = sub_sub_key.replace('_', ' ').title()
+                                                    formatted_parts.append(f"    • {sub_sub_key_display}: {sub_sub_value}")
+                                            elif isinstance(sub_value, list):
+                                                formatted_parts.append(f"  {sub_key_display}:")
+                                                for item in sub_value:
+                                                    formatted_parts.append(f"    • {item}")
+                                            else:
+                                                formatted_parts.append(f"  • {sub_key_display}: {sub_value}")
+                                    elif isinstance(value, list):
+                                        formatted_parts.append(f"\n{key_display}:")
+                                        for item in value:
+                                            formatted_parts.append(f"  • {item}")
+                                    else:
+                                        formatted_parts.append(f"{key_display}: {value}")
+                                
+                                result = "\n".join(formatted_parts).strip()
+                                return result if result else None
+                            
+                            # Helper to clean plan text (remove JSON-looking parts and agent meta-responses)
+                            def clean_plan_text(text):
+                                # Remove agent meta-responses
+                                skip_phrases = [
+                                    "I am ready to analyze",
+                                    "I need you to provide",
+                                    "As a large language model",
+                                    "Please share the innovative idea",
+                                    "Once you provide the details"
+                                ]
+                                
+                                lines = text.split('\n')
+                                cleaned = []
+                                skip_next_lines = 0
+                                
+                                for line in lines:
+                                    line_lower = line.lower().strip()
+                                    
+                                    # Skip lines with skip phrases
+                                    if any(phrase.lower() in line_lower for phrase in skip_phrases):
+                                        skip_next_lines = 3  # Skip next few lines too
+                                        continue
+                                    
+                                    if skip_next_lines > 0:
+                                        skip_next_lines -= 1
+                                        continue
+                                    
+                                    # Skip lines that are just JSON/dict structures
+                                    line_stripped = line.strip()
+                                    if (line_stripped.startswith('{') and line_stripped.endswith('}')) or \
+                                       (line_stripped.startswith("'") and ':' in line_stripped and line_stripped.endswith(',')):
+                                        continue
+                                    
+                                    # Skip markdown headers in plan
+                                    if line_stripped.startswith('#') or line_stripped.startswith('##'):
+                                        continue
+                                    
+                                    cleaned.append(line)
+                                
+                                result = '\n'.join(cleaned).strip()
+                                # Remove multiple blank lines
+                                result = re.sub(r'\n{3,}', '\n\n', result)
+                                return result if result else None
+                            
+                            # Build natural conversational response - show only one idea
                             response_parts = []
                             
-                            # Get the main research idea (this is the core content)
-                            if selected_idea and selected_idea != 'N/A':
+                            # Get the main research idea (single response only)
+                            if selected_idea and selected_idea not in ['N/A', None]:
                                 cleaned = clean_text(selected_idea)
                                 if cleaned:
-                                    response_parts.append(cleaned)
+                                    meta_response_phrases = [
+                                        "I am ready to analyze",
+                                        "I need you to provide",
+                                        "As a large language model",
+                                        "I don't have access to past conversations",
+                                        "Please share the innovative idea",
+                                        "Once you provide the details",
+                                        "However, I need you to provide"
+                                    ]
+                                    is_meta_response = any(phrase.lower() in cleaned.lower() for phrase in meta_response_phrases)
+                                    if not (is_meta_response and len(cleaned) < 500):
+                                        for phrase in meta_response_phrases:
+                                            cleaned = cleaned.replace(phrase, "")
+                                        cleaned = cleaned.strip()
+                                        if cleaned and len(cleaned) > 50:
+                                            response_parts.append(cleaned)
                             
                             # Skip final_result if it's just a generic completion message
                             # Only add it if it has actual content
-                            if final_result and final_result != 'N/A':
+                            if final_result and final_result not in ['N/A', None]:
                                 cleaned = clean_text(final_result)
                                 if cleaned and "Research completed successfully" not in cleaned:
                                     response_parts.append(cleaned)
                             
                             # Skip code survey entirely if it's a placeholder
                             # Only add if it has real content
-                            if code_survey and code_survey != 'N/A':
+                            if code_survey and code_survey not in ['N/A', None]:
                                 cleaned_survey = clean_code_survey(code_survey)
                                 cleaned = clean_text(cleaned_survey) if cleaned_survey else None
                                 if cleaned:
                                     response_parts.append(cleaned)
                             
                             # Add implementation plan if it has real content
-                            if plan and plan != 'N/A':
+                            if plan and plan not in ['N/A', None]:
                                 formatted_plan = format_plan(plan)
-                                cleaned = clean_text(formatted_plan) if formatted_plan else None
-                                if cleaned:
-                                    response_parts.append(cleaned)
+                                if formatted_plan:
+                                    # Don't run clean_text on formatted plan - it's already formatted
+                                    # Just remove any "N/A" strings that might be in the content
+                                    formatted_plan = formatted_plan.replace("N/A", "").replace("None", "").strip()
+                                    if formatted_plan and len(formatted_plan) > 20:  # Only add if substantial
+                                        response_parts.append(formatted_plan)
                             
                             # Join all parts with natural spacing - NO headers, NO structure
                             if response_parts:
                                 result = "\n\n".join(response_parts)
+                                # Final cleanup - remove any remaining "N/A" strings
+                                result = result.replace("N/A", "").replace("\n\n\n", "\n\n").strip()
                             else:
                                 result = "I've completed the research analysis based on your query."
                         else:
